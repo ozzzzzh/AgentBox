@@ -1,0 +1,239 @@
+{
+  "name": "agentbox-vscode",
+  "displayName": "AgentBox",
+  "description": "AgentBox: Codex app-server runtime with a webview chat sidebar, inline approvals, and file context.",
+  "version": "0.3.0",
+  "publisher": "agentbox",
+  "private": true,
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=18"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentbox",
+          "title": "AgentBox",
+          "icon": "media/agentbox.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentbox": [
+        {
+          "type": "webview",
+          "id": "agentbox.chat",
+          "name": "Chat",
+          "icon": "media/agentbox.svg",
+          "contextualTitle": "AgentBox"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "agentbox.openChat",
+        "title": "AgentBox: Open Chat",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.configure",
+        "title": "AgentBox: Settings",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.runTurn",
+        "title": "AgentBox: Run Turn",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.cancelTurn",
+        "title": "AgentBox: Cancel Turn",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.showOutput",
+        "title": "AgentBox: Show Output",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.setApiKey",
+        "title": "AgentBox: Set API Key",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.clearApiKey",
+        "title": "AgentBox: Clear API Key",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.restartRuntime",
+        "title": "AgentBox: Restart Runtime",
+        "category": "AgentBox"
+      }
+    ],
+    "configuration": {
+      "title": "AgentBox",
+      "properties": {
+        "agentbox.runtime": {
+          "type": "string",
+          "enum": [
+            "codex",
+            "fake"
+          ],
+          "default": "codex",
+          "description": "Runtime: real Codex app-server, or the fake runtime for UI testing."
+        },
+        "agentbox.taskProfile": {
+          "type": "string",
+          "enum": [
+            "simple",
+            "code",
+            "research"
+          ],
+          "default": "code",
+          "description": "Task budget profile: simple = static files (8 steps / 90s), code = normal coding (20 / 180s), research = multi-step (30 / 300s)."
+        },
+        "agentbox.loopDetection.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stop a turn when the same tool call keeps failing or tools fail consecutively."
+        },
+        "agentbox.loopDetection.maxRepeatedFailures": {
+          "type": "number",
+          "default": 2,
+          "minimum": 2,
+          "description": "Stop after the same tool name+args fails this many times."
+        },
+        "agentbox.loopDetection.maxConsecutiveFailures": {
+          "type": "number",
+          "default": 4,
+          "minimum": 2,
+          "description": "Stop after this many consecutive tool failures."
+        },
+        "agentbox.codex.command": {
+          "type": "string",
+          "default": "codex",
+          "description": "Codex executable. Use an absolute path if codex is not on PATH."
+        },
+        "agentbox.codex.model": {
+          "type": "string",
+          "default": "deepseek-flash",
+          "description": "Model id passed to Codex."
+        },
+        "agentbox.codex.provider": {
+          "type": "string",
+          "default": "deepseek",
+          "description": "Provider id written to the isolated CODEX_HOME/config.toml."
+        },
+        "agentbox.codex.baseUrl": {
+          "type": "string",
+          "default": "https://api.deepseek.com",
+          "description": "OpenAI-compatible provider base URL (Codex uses the Responses API)."
+        },
+        "agentbox.codex.apiKeyEnv": {
+          "type": "string",
+          "default": "DEEPSEEK_API_KEY",
+          "description": "Environment variable name used as Codex env_key."
+        },
+        "agentbox.codex.scope": {
+          "type": "string",
+          "enum": [
+            "internal",
+            "external"
+          ],
+          "default": "external",
+          "description": "internal = intranet model; external = user-confirmed public provider."
+        },
+        "agentbox.codex.home": {
+          "type": "string",
+          "default": "",
+          "description": "Persistent CODEX_HOME. Empty = extension global storage."
+        },
+        "agentbox.codex.approvalPolicy": {
+          "type": "string",
+          "enum": [
+            "untrusted",
+            "on-request",
+            "never"
+          ],
+          "default": "on-request",
+          "description": "Codex thread approval policy."
+        },
+        "agentbox.codex.permissions": {
+          "type": "string",
+          "default": ":workspace",
+          "description": "Codex permission profile id."
+        },
+        "agentbox.codex.autoSetupSandbox": {
+          "type": "boolean",
+          "default": true,
+          "description": "On Windows, run windowsSandbox/setupStart once when readiness is notConfigured."
+        },
+        "agentbox.codex.extraInstructions": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Additional developer instructions appended to AgentBox's built-in Codex instructions. The built-in instructions already cover Windows/PowerShell usage and file hygiene (avoid patch/helper/browser-profile files)."
+        },
+        "agentbox.files.denyWrite": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/.chrome-profile/**",
+            "**/*.patch",
+            "**/dom.txt",
+            "**/preview.png",
+            "**/len-test*",
+            "**/patch-test*",
+            "**/apply-*.py",
+            "**/.tmp/**"
+          ],
+          "markdownDescription": "Glob patterns for paths the file policy denies when Codex requests approval. Paths visible in the approval payload are checked; commands containing browser/profile junk markers are denied, and browser-preview commands require confirmation."
+        },
+        "agentbox.envFile": {
+          "type": "string",
+          "default": "",
+          "description": "Optional .env file for local testing. ${workspaceFolder} is expanded. Prefer Set API Key / SecretStorage."
+        },
+        "agentbox.limits.turnTimeoutMs": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Optional per-turn timeout override. Leave empty to use the selected task profile."
+        },
+        "agentbox.limits.maxSteps": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Optional max steps override. Leave empty to use the selected task profile."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:runtime": "npm --prefix ../agent-runtime run build",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "npm run build:runtime && npm run typecheck && node esbuild.mjs",
+    "test": "vitest run",
+    "verify": "npm run build && npm test",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository -o agentbox-0.3.0.vsix"
+  },
+  "dependencies": {
+    "@agentbox/runtime": "file:../agent-runtime",
+    "dompurify": "^3.4.17",
+    "marked": "^18.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

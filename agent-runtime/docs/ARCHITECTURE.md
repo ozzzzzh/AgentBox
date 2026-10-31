@@ -37,7 +37,8 @@
 ```
 
 `agent-runtime/src` **禁止 import `vscode`**，也禁止 import `pluginVersion` 里的代码。
-VS Code 集成在下一阶段通过 adapter/消费者完成。
+VS Code 代码放在独立包 `extension/`，通过 `AgentRuntime` + `AgentEvent` 消费本包。
+薄消费者（V1–V4）用于端到端验证；完整产品 UI 在下一阶段。
 
 ---
 
@@ -76,23 +77,35 @@ sequenceDiagram
 
 ```ts
 type AgentEvent =
-  | { type: 'turn.start'; turnId: string; runtime: RuntimeId; at: number }
+  | { type: 'turn.start'; turnId: string; runtime: RuntimeId; at: number; metadata?: Record<string, unknown> }
   | { type: 'text.delta'; turnId: string; text: string; at: number }
   | { type: 'tool.start'; turnId: string; callId: string; name: string; args: unknown; at: number }
   | { type: 'tool.end'; turnId: string; callId: string; name: string; ok: boolean; result: string; at: number }
   | { type: 'approval.request'; turnId: string; callId: string; name: string; args: unknown; at: number }
   | { type: 'file.changed'; turnId: string; path: string; at: number }
+  | { type: 'token.usage'; turnId: string; usage: TokenUsageSnapshot; at: number }
   | { type: 'turn.end'; turnId: string; reason: StopReason; at: number }
   | { type: 'error'; turnId: string; code: string; message: string; at: number };
 ```
 
+事件契约版本：`AGENT_EVENT_SCHEMA_VERSION = 1`（`src/types.ts` 导出）；破坏性变更必须递增。
+
 约定：
 
 - `text.delta` 只放增量文本，UI 自己拼接。
+- `token.usage` 为**可选、非破坏性**事件：Codex 映射 `thread/tokenUsage/updated`，
+  携带 `last`（本轮）与 `total`（线程/会话累计）token 用量；不支持该能力的 runtime 不发。
 - `tool.start` / `tool.end` 必须成对；失败时 `ok=false`，`result` 放错误摘要。
-- `approval.request` 只表示"需要审批"，实际 allow/ask/deny 由调用方的 Policy 决定。
-- `turn.end` 必须最终发出一次，带上 `StopReason`。
+- `approval.request` 只表示"需要审批"；调用方通过 `resolveApproval(turnId, callId, 'allow' | 'deny')`
+  回执，adapter 必须把决定回传给子进程。**被拒绝的工具不得执行**；若因此结束 turn，
+  `turn.end.reason = 'policy_denied'`。
+- `turn.end` 必须最终发出一次，带上 `StopReason`；**恰好一次**。超时/进程崩溃由守卫兜底发
+  `error` + `turn.end('error')`。`turn.end` 之后同一 turnId 的事件一律丢弃。
+- 每个 runtime 实例**同一时刻只有一个活动 turn**；并发 `startTurn` 抛 `TURN_IN_PROGRESS`。
+- `file.changed.path` 统一为 **workspace 相对路径、POSIX 分隔符、无前导 `/`、无 `..`**。
+- `turn.start.metadata` 只回显可 JSON 序列化、不含密钥的调用方元数据。
 - 事件里不要放密钥、完整环境变量、超长输出（截断到 `maxOutputCharsPerTool`）。
+- Limits 优先级：`DEFAULT_LIMITS` < `RuntimeConfig.limits` < `TurnInput.limits`（partial 覆盖）。
 
 ---
 
@@ -114,6 +127,7 @@ interface RuntimeCapabilities {
 - Codex：预计 `streaming/toolEvents/fileEvents/approvals/mcp` 都有，**以 Phase 0 实测为准**。
 - OpenCode：预计 `streaming/toolEvents/approvals/mcp` 有；`fileEvents` 可能弱，需实测。
 - 调用方根据 capability 降级（例如没有 `fileEvents` 就用 `Workspace` watcher 兜底）。
+- `mcp` 本阶段仅作能力声明，`AgentEvent` 没有 MCP 事件；MCP 工具接入在下一阶段。
 
 ---
 
@@ -134,7 +148,10 @@ interface RuntimeCapabilities {
 
 规则：
 
-- 默认 **不出网**；唯一模型出口是内网 LiteLLM。
+- **默认内网**：默认模型出口是内网 LiteLLM，不出网。
+- **公网模型为显式例外（2026-10-28 决策）**：用户可配置公网 OpenAI-compatible 提供商
+  （Zone C），必须 opt-in、界面告警、可审计；默认关闭。秘密级数据禁止发送到公网模型。
+- Codex 需要 Responses API；OpenCode 使用 chat completions；配置层需表达 `wireApi`/提供商差异。
 - 关闭 Codex/OpenCode 的遥测、自动更新、云端登录；用断网环境验证。
 - 子进程只监听 localhost；不暴露 0.0.0.0。
 - 文件工具限制在 `workspaceRoot`；shell 走 allowlist + 审批。
@@ -148,9 +165,11 @@ interface RuntimeCapabilities {
 
 下一阶段的 VS Code 插件只需要：
 
-1. 构造 `RuntimeConfig`（runtime、workspaceRoot、limits、命令/端口）。
+1. 构造 `RuntimeConfig`（runtime、workspaceRoot、limits、命令/端口、模型提供商）。
+   模型提供商需包含 `baseUrl`、`apiKeyEnv`、`model`、`wireApi` 与 `scope`（internal/external）；
+   `scope=external` 必须由用户显式确认。
 2. `createRuntime(config)` → `start()`。
-3. `startTurn()` + `onEvent()` 驱动 UI。
+3. `startTurn()` + `onEvent()` 驱动 UI；审批时调用 `resolveApproval(turnId, callId, decision)`。
 4. `abort()` / `stop()` 处理取消和窗口关闭。
 
 知识/Skill 注入的预留点：
@@ -164,7 +183,8 @@ interface RuntimeCapabilities {
 ## 7. 非目标（本阶段）
 
 - 不实现知识库、Skill Registry、采集 pipeline、文档模板。
-- 不实现 VS Code Chat UI、TreeView、diff 面板。
+- 不实现**完整** VS Code 产品 UI（Chat 面板、TreeView、diff 面板、知识/资产视图）。
+  但允许并建议一个**薄消费者**（`extension/`，V1–V4）用于端到端验证与打包。
 - 不实现 OpenClaw adapter，不修改 `pluginVersion/`。
 - 不自研 agent loop（Codex/OpenCode 已经是引擎）。
 - 不做多 agent、多会话并发、团队协作。

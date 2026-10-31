@@ -3,21 +3,48 @@
   "version": "0.1.0",
   "private": true,
   "description": "AgentBox agent runtime layer: Codex app-server (primary) and OpenCode server (backup).",
+  "license": "Apache-2.0",
   "type": "commonjs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "agentbox": "dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "require": "./dist/testing/index.js",
+      "default": "./dist/testing/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "examples"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=18"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean": "node scripts/clean.mjs",
+    "build": "npm run clean && tsc -p tsconfig.json",
     "watch": "tsc -w -p tsconfig.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "cli": "node dist/cli/index.js",
+    "typecheck:examples": "tsc -p tsconfig.examples.json",
+    "example:fake": "node examples/run-fake.cjs",
+    "pack:check": "npm pack --dry-run",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "verify": "npm run build && npm run typecheck:examples && npm test && npm run check:boundaries"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -14,5 +14,9 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "src/testing/contract.ts",
+    "src/testing/fixture.ts"
+  ]
 }

@@ -78,3 +78,25 @@ node dist/cli.js eval --runtimes codex,opencode --tasks .\tasks.json --out .\res
   2. OpenCode + Qwen 是否更稳？
   3. 哪个作为主、哪个作为备？
   4. 是否存在必须修的安全/稳定性问题？
+
+---
+
+## 6. 基线结果（2026-10-30）
+
+| 项 | 值 |
+|---|---|
+| Runtime | Codex app-server 0.165.0 |
+| Model | DeepSeek `deepseek-flash`（Responses API） |
+| 结果 | **9/10（90%）** |
+| avg steps | 6.9 |
+| avg duration | 41.4s |
+| avg first token | 2.7s |
+| approvals | 2 |
+| tool errors | 22 |
+
+- 报告：[eval/results/2026-10-30-codex-deepseek/report.md](../eval/results/2026-10-30-codex-deepseek/report.md)
+- 失败项：`add-test` 功能检查通过（pytest 1 passed），但 turn 在 180s 超时；
+  模型成功写测试后停顿，严格口径记为失败。
+- 主要噪声：DeepSeek 在 Windows 上多次尝试 `apply_patch`（PowerShell 引号/here-string），
+  造成 tool errors 偏高；建议 `maxSteps` 24–30，并补 `model_catalog_json`。
+- 双 runtime 对比（OpenCode）待 M7；当前只有 Codex 基线。

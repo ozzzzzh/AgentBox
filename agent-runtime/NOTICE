@@ -1,0 +1,24 @@
+AgentBox Runtime
+===============
+
+This package is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party runtimes are integrated as separate processes and are NOT bundled
+or redistributed by this package:
+
+- Codex CLI 0.165.0
+  https://github.com/openai/codex
+  License: Apache-2.0
+  Installed separately by the operator; pin the version and retain its
+  LICENSE/NOTICE files.
+
+- OpenCode 1.19.4
+  https://github.com/anomalyco/opencode
+  License: MIT
+  Installed separately by the operator; pin the version and retain its
+  LICENSE/NOTICE files.
+
+The operator is responsible for:
+- verifying third-party telemetry/auto-update/cloud-login behavior is disabled;
+- restricting outbound network access to approved model gateways;
+- complying with the licenses of the pinned runtime versions.

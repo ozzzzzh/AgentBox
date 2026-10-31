@@ -1,6 +1,7 @@
 import { RuntimeError } from '../errors.js';
 import type {
   AgentRuntime,
+  ApprovalDecision,
   EventListener,
   RuntimeCapabilities,
   RuntimeConfig,
@@ -61,6 +62,17 @@ export class OpenCodeRuntime implements AgentRuntime {
   onEvent(_listener: EventListener): () => void {
     // Phase 3: map SSE/HTTP events to normalized AgentEvent.
     return () => undefined;
+  }
+
+  async resolveApproval(
+    turnId: string,
+    callId: string,
+    _decision: ApprovalDecision
+  ): Promise<void> {
+    throw new RuntimeError(
+      'NOT_IMPLEMENTED',
+      `OpenCodeRuntime.resolveApproval(${turnId}, ${callId}) is not implemented.`
+    );
   }
 
   async abort(turnId: string): Promise<void> {
