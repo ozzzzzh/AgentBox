@@ -4,9 +4,9 @@ import type {
   TokenUsageSnapshot,
 } from '@agentbox/runtime';
 import type { ApprovalPrompt, TurnUi } from '../controller';
-import type { HostToWebview } from '../chat-protocol';
+import type { SessionEvent } from '../chat-protocol';
 
-type Poster = (message: HostToWebview) => void;
+type Poster = (message: SessionEvent) => void;
 
 interface PendingApproval {
   resolve: (decision: ApprovalDecision) => void;
@@ -124,7 +124,7 @@ export class WebviewTurnUi implements TurnUi {
     }
   }
 
-  private send(message: HostToWebview): void {
+  private send(message: SessionEvent): void {
     if (this.disposed) return;
     try {
       this.post(message);

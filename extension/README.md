@@ -8,6 +8,8 @@
 > 打开内嵌设置浮层（Runtime / Provider / 模型 / Base URL / 审批策略 / limits），不离开对话。
 > 输入框自动增高，发送与取消合并为右侧同一个图标按钮。
 > 输入框上方固定显示活动时间线（思考 / 生成 / 工具三条泳道，失败工具变红，可折叠）。
+> 顶部会话标签栏支持多会话：新建、切换、长按关闭；每个会话保留独立上下文和 transcript。
+> 每个会话各自启动一个 Codex app-server 进程；顶栏 **⧉** 可把聊天打开为编辑器标签页，像文件一样拖动/拆分布局。
 > 任务模式 simple / code / research 控制步数与超时；重复工具失败会自动停止本轮。
 > 命令执行不进入对话，只出现在时间线；完整明细写入 **AgentBox Chat** 输出通道。
 > Codex 默认附带 Windows/PowerShell 与文件卫生提示词，避免生成 patch/临时脚本/浏览器 profile。
@@ -36,7 +38,7 @@
 cd extension
 npm install
 npm run build      # 构建 runtime + typecheck + esbuild（extension + webview）
-npm test           # 62 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / bundle）
+npm test           # 67 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / bundle）
 npm run verify
 ```
 
@@ -253,11 +255,12 @@ CodexRuntime 启动时读取 `windowsSandbox/readiness`：
 
 ---
 
-## 4. 使用侧边栏
+## 4. 使用聊天
 
 1. 安装 VSIX 并重载窗口。
 2. 打开一个**临时工作区**（不要用生产仓库做公网模型冒烟）。
-3. 点击活动栏的 **AgentBox** 图标，或执行 **AgentBox: Open Chat**。
+3. 执行 **AgentBox: Open Chat** 默认打开编辑器标签页；点击活动栏的 **AgentBox** 图标
+   则打开侧边栏视图，执行 **AgentBox: Focus Sidebar** 可回到侧边栏。
 4. 在输入框输入任务，按 **Enter** 发送（**Shift+Enter** 换行）；输入框随内容自动增高。
 5. 打开/切换文件时，**当前文件** 默认选中（带 ✓）；
    选中新的文本区间时，**选区** 也默认选中；两者都可点击取消。
@@ -271,6 +274,12 @@ CodexRuntime 启动时读取 `windowsSandbox/readiness`：
 10. 遇到 `approval.request` 时在卡片上选择 **允许 / 拒绝**。
 11. 运行中右下角按钮变成 **停止**（同一个按钮），也可执行 **AgentBox: Cancel Turn**。
 12. 顶栏 **＋** 新建会话，**⚙** 打开内嵌设置浮层（不离开对话）。
+13. 顶栏下方是 **会话标签栏**：点击切换会话；**长按标签上的 `×` 约 0.65 秒**，
+    按钮外圈会走一圈进度，松手前完成才会关闭。每个会话有独立 transcript、token 统计、
+    Codex thread 和独立的 `codex app-server` 进程。同一时刻只允许一个会话运行，
+    切换前需先停止当前 turn。会话保留在扩展内存中，Reload 窗口后清空。
+14. 顶栏 **⧉**、视图标题栏菜单或命令 **AgentBox: Open in Editor** 把同一个聊天
+    打开为编辑器标签页；编辑器标签页可以像普通文件一样拖动、拆分到其他编辑器组。
 
 ### 4.1 设置浮层
 
@@ -322,7 +331,9 @@ CodexRuntime 启动时读取 `windowsSandbox/readiness`：
 
 | 命令 | 作用 |
 |---|---|
-| `AgentBox: Open Chat` | 聚焦侧边栏聊天面板 |
+| `AgentBox: Open Chat` | 打开编辑器标签页（默认入口，可拖动/拆分） |
+| `AgentBox: Open in Editor` | 把聊天打开为可拖动/拆分的编辑器标签页 |
+| `AgentBox: Focus Sidebar` | 聚焦活动栏里的 AgentBox 侧边栏视图 |
 | `AgentBox: Settings` | 打开内嵌设置浮层 |
 | `AgentBox: Run Turn` | 降级入口：OutputChannel + 模态审批 |
 | `AgentBox: Cancel Turn` | 取消侧边栏或降级入口中的活动 turn |
@@ -348,8 +359,11 @@ CodexRuntime 启动时读取 `windowsSandbox/readiness`：
 
 ## 6. 已知限制（UI-1）
 
-- 单会话；没有 transcript 持久化，Reload 后清空（UI-2）。
-- 没有多会话、历史列表、重试按钮。
+- 支持多会话切换/新建/关闭，但会话仅保存在扩展内存中；Reload 后清空，没有历史列表/重试按钮（UI-2）。
+- 每个会话各自持有一个 `codex app-server` 进程；会话未首次发送 prompt 前不会启动进程，关闭会话或所有 webview 都关闭时释放。
+- 大量会话会增加内存占用；每个会话会保存 UI 事件用于切换/编辑器面板回放，长会话回放会变慢。
+- 同一时刻只允许一个会话运行；切换会话前必须停止当前 turn。
+- 编辑器标签页与侧边栏共享同一个会话和事件流；关闭所有 webview（侧边栏和编辑器标签页）会释放 runtime，重新打开时 transcript 可回放，但模型 thread 上下文需要重新建立。
 - diff 仅在工具卡中展示 Codex `fileChange` 的 patch 文本；原生 diff 在 UI-2。
 - shell 明细不在聊天中展开，完整参数/输出使用 **AgentBox: Show Output** 查看。
 - `file.changed` 通过 VS Code watcher 兜底 shell 写文件；只覆盖当前工作区，且只在该 turn 运行时上报。

@@ -32,12 +32,12 @@
 | **V2** 真实 Codex VSIX | ✅ | 2026-10-30 | `extension@0.2.0` + `agentbox-0.2.0.vsix` | 13 + 1 real | 真实 VS Code UAT 通过：写文件、审批 Allow/Deny、Cancel |
 | **V3** 双 runtime VSIX | ⬜ | — | — | — | 待 M7/M8 |
 | **V4** Release VSIX | ⬜ | — | — | — | 待 V4 发布流程（M9/M10 已就绪） |
-| **UI-1** Webview 侧边栏 MVP | ✅ | 2026-10-31 | `extension@0.3.0` + `agentbox-0.3.0.vsix` | 62 | build / test / package / 隔离安装通过 |
+| **UI-1** Webview 侧边栏 MVP | ✅ | 2026-10-31 | `extension@0.3.0` + `agentbox-0.3.0.vsix` | 67 | build / test / package / 隔离安装通过；含多会话与编辑器面板 |
 
-**当前累计**：203 个测试通过（默认套件）。
+**当前累计**：208 个测试通过（默认套件）。
 
 - `agent-runtime`：141 个测试 / 14 个文件（含 CLI 15、eval 9）
-- `extension`：62 个测试 / 11 个文件（controller 11、settings 7、chat-view 12、timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、bundle 1）
+- `extension`：67 个测试 / 11 个文件（controller 11、settings 7、chat-view 17、timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、bundle 1）
 - 另有 1 个真实 Codex 集成测试（`V2_E2E=1` 手动运行）已通过。
 - 10 条 eval 基线已跑通：9/10（90%）。
 
@@ -598,19 +598,21 @@ npm run verify   # build + vitest + check-boundaries
 
 **测试与验证**
 
-- `extension` 62 个测试 / 11 个文件：
-  controller 11、settings 7、chat-view 12、timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、bundle 1。
+- `extension` 67 个测试 / 11 个文件：
+  controller 11、settings 7、chat-view 17、timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、bundle 1。
 - 时间线模型测试：`tests/timeline.spec.ts`（LLM 推导、审批独立、失败标记、
   open span 延展、finish/reset）。
-- `npm run verify` 通过；`agentbox-0.3.0.vsix` 93.21 KB（9 files）。
+- `npm run verify` 通过；`agentbox-0.3.0.vsix` 96.46 KB（9 files）。
 - VSIX 隔离 `--extensions-dir` 安装成功。
 - 1 个真实 Codex 集成测试（`V2_E2E=1`）在 UI-1 收尾时重新运行通过：
   Codex + DeepSeek、合成临时工作区、9.25s。
 
 **已知限制**
 
-- 单会话；transcript 不持久化，Reload 后清空（UI-2）。
-- 无多会话/历史/重试；diff 仅 patch 文本（UI-2 原生 diff）。
+- 多会话可在标签栏新建/切换/长按关闭；会话仅保存在扩展内存，Reload 后清空（UI-2 持久化）。
+- 每个会话各自持有一个 `codex app-server` 进程；同一时刻只允许一个会话运行。
+- 编辑器中打开的 `WebviewPanel` 与侧边栏共享会话事件；关闭所有 webview 会释放 runtime，重新打开可回放 transcript，但模型 thread 需重建。
+- 无历史列表/重试；diff 仅 patch 文本（UI-2 原生 diff）。
 - watcher 只覆盖当前工作区，且只在 turn 运行时上报。
 - 上下文按字符预算截断（文件 12k、选区 8k），不是精确 token 计数。
 - 固定第一个 workspace folder；切换工作区会重建会话。

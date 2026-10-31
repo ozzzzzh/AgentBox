@@ -36,6 +36,8 @@ const sendIcon = byId<SVGElement>('icon-send');
 const stopIcon = byId<SVGElement>('icon-stop');
 const newButton = byId<HTMLButtonElement>('new');
 const settingsButton = byId<HTMLButtonElement>('settings');
+const openEditorButton = byId<HTMLButtonElement>('open-editor');
+const sessionBar = byId<HTMLElement>('session-bar');
 const statusLine = byId<HTMLElement>('status');
 const contextBar = byId<HTMLElement>('context-bar');
 const fileToggle = byId<HTMLButtonElement>('toggle-file');
@@ -67,12 +69,17 @@ const timelineLanes: Record<TimelineKind, HTMLElement> = {
   generation: byId<HTMLElement>('lane-generation'),
   tool: byId<HTMLElement>('lane-tool'),
 };
-const timeline = new TurnTimeline();
+let timeline = new TurnTimeline();
 
 interface QuestionEntry {
   message: HTMLElement;
   preview: string;
 }
+
+let activeSessionId: string | null = null;
+let sessionSummaries: Array<{ id: string; title: string; busy: boolean }> = [];
+let holdTimer: ReturnType<typeof setTimeout> | null = null;
+let holdButton: HTMLButtonElement | null = null;
 
 const questions: QuestionEntry[] = [];
 let navWindowStart = -1;
@@ -968,6 +975,106 @@ function updateContext(next: ContextInfo): void {
   contextBar.hidden = file === undefined && selection === undefined;
 }
 
+function resetActiveView(): void {
+  timeline = new TurnTimeline();
+  stopTimelineClock();
+  clearTranscript();
+  turnTokens = null;
+  sessionTokens = 0;
+  navWindowStart = -1;
+  navWindowEnd = -1;
+  renderTimeline();
+  renderTokenUsage();
+}
+
+function cancelHold(): void {
+  if (holdTimer !== null) {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+  }
+  holdButton?.classList.remove('holding');
+  holdButton = null;
+}
+
+function beginHold(button: HTMLButtonElement, id: string): void {
+  cancelHold();
+  holdButton = button;
+  button.classList.add('holding');
+  holdTimer = setTimeout(() => {
+    const target = holdButton;
+    cancelHold();
+    target?.classList.remove('holding');
+    post({ type: 'session.close', id, confirm: true });
+  }, 650);
+}
+
+function renderSessionTabs(): void {
+  cancelHold();
+  sessionBar.replaceChildren();
+  for (const summary of sessionSummaries) {
+    const wrap = document.createElement('div');
+    wrap.className = `session-tab-wrap${
+      summary.id === activeSessionId ? ' active' : ''
+    }`;
+
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = 'session-tab';
+    tab.textContent = summary.title;
+    tab.title = summary.title;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute(
+      'aria-selected',
+      summary.id === activeSessionId ? 'true' : 'false'
+    );
+    tab.addEventListener('click', () => {
+      if (summary.id !== activeSessionId) {
+        post({ type: 'session.select', id: summary.id });
+      }
+    });
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'session-close';
+    close.textContent = '×';
+    close.title = '长按关闭会话';
+    close.setAttribute('aria-label', `长按关闭会话 ${summary.title}`);
+    close.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      event.stopPropagation();
+      beginHold(close, summary.id);
+    });
+    for (const type of ['pointerup', 'pointerleave', 'pointercancel']) {
+      close.addEventListener(type, cancelHold);
+    }
+    close.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      post({ type: 'session.close', id: summary.id, confirm: true });
+    });
+    close.addEventListener('click', (event) => {
+      // Pointer holds are handled above; suppress the click that follows a
+      // pointer sequence so a short click never closes a session.
+      event.stopPropagation();
+    });
+
+    wrap.append(tab, close);
+    sessionBar.appendChild(wrap);
+  }
+}
+
+function applySessions(
+  summaries: Array<{ id: string; title: string; busy: boolean }>,
+  activeId: string
+): void {
+  sessionSummaries = summaries;
+  if (activeSessionId === null && activeId !== '') {
+    activeSessionId = activeId;
+  }
+  renderSessionTabs();
+}
+
 function clearTranscript(): void {
   transcript.replaceChildren();
   questions.length = 0;
@@ -1001,6 +1108,20 @@ function handleMessage(message: HostToWebview): void {
       setBusy(message.busy);
       return;
 
+    case 'sessions':
+      applySessions(message.sessions, message.activeId);
+      return;
+
+    case 'session.load':
+      activeSessionId = message.id;
+      cancelHold();
+      resetActiveView();
+      for (const event of message.events) {
+        handleMessage(event);
+      }
+      renderSessionTabs();
+      return;
+
     case 'context':
       updateContext(message.context);
       return;
@@ -1019,6 +1140,10 @@ function handleMessage(message: HostToWebview): void {
 
     case 'settings.error':
       showSettingsError(message.message);
+      return;
+
+    case 'user.message':
+      addUserMessage(message.text);
       return;
 
     case 'busy':
@@ -1144,13 +1269,11 @@ function handleMessage(message: HostToWebview): void {
       return;
 
     case 'clear':
-      timeline.reset();
-      stopTimelineClock();
-      renderTimeline();
-      turnTokens = null;
-      sessionTokens = 0;
-      renderTokenUsage();
-      clearTranscript();
+      activeSessionId = null;
+      sessionSummaries = [];
+      cancelHold();
+      renderSessionTabs();
+      resetActiveView();
       return;
   }
 }
@@ -1214,7 +1337,6 @@ function sendPrompt(): void {
   const text = input.value.trim();
   if (text === '') return;
 
-  addUserMessage(text);
   input.value = '';
   autoResize();
   setBusy(true);
@@ -1234,8 +1356,11 @@ submitButton.addEventListener('click', () => {
   }
 });
 newButton.addEventListener('click', () => {
-  clearTranscript();
-  post({ type: 'newSession' });
+  if (busy) return;
+  post({ type: 'session.new' });
+});
+openEditorButton.addEventListener('click', () => {
+  post({ type: 'openEditor' });
 });
 settingsButton.addEventListener('click', openSettingsPanel);
 settingsClose.addEventListener('click', closeSettingsPanel);
@@ -1287,6 +1412,7 @@ window.addEventListener('message', (event: MessageEvent<HostToWebview>) => {
 applyTimelineCollapsed();
 setBusy(false);
 autoResize();
+renderSessionTabs();
 renderTimeline();
 renderTokenUsage();
 post({ type: 'ready' });

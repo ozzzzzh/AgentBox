@@ -86,6 +86,16 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     vscode.commands.registerCommand('agentbox.openChat', async () => {
+      // The default entry is a real editor tab so it can be dragged/split like
+      // a file. The activity-bar view remains available as a sidebar surface.
+      await provider.openInEditor();
+    }),
+
+    vscode.commands.registerCommand('agentbox.openInEditor', async () => {
+      await provider.openInEditor();
+    }),
+
+    vscode.commands.registerCommand('agentbox.focusSidebar', async () => {
       await vscode.commands.executeCommand('agentbox.chat.focus');
     }),
 

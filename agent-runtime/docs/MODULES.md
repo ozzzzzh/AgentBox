@@ -124,6 +124,7 @@ VS Code 代码放在独立包 `extension/`，不进入 `agent-runtime/src`。
 | **D18** | 审批阶段文件策略：从 `approval.request` 可见路径/命令中匹配 deny glob 与浏览器命令；命中路径/标记直接 deny，浏览器命令 confirm；仅当 Codex 请求审批时生效 | 在不改动 Codex 沙箱的前提下减少垃圾产物；硬限制仍需沙箱/ACL |
 | **D19** | 任务 profile（extension 侧）：`simple` 8 步/90s、`code` 20 步/180s、`research` 30 步/300s；`limits.maxSteps` / `turnTimeoutMs` 显式设置可覆盖 | 简单静态任务不再使用研究级预算，降低 token/时间 |
 | **D20** | 循环检测（extension 侧）：相同 tool name+args 连续失败 2 次或连续工具失败 4 次 → abort；成功调用重置计数 | 避免 apply_patch/浏览器预览等失败循环耗尽 token |
+| **D21** | 多会话（extension 侧）：每个会话拥有独立的 `RuntimeController` / `codex app-server` 进程与 transcript；同一时刻只允许一个会话运行；侧边栏与 `WebviewPanel` 通过 `session.load` 回放会话事件；关闭会话需长按 `×` 0.65s；会话仅保存在扩展内存中（Reload 后清空） | 在不破坏“单 runtime 单 turn”契约的前提下支持多任务，并让聊天可像文件一样拖到编辑器组；后续可演进为共享 app-server 多 thread + 持久化 |
 
 ---
 

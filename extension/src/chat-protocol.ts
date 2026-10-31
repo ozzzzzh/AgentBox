@@ -21,20 +21,19 @@ export interface SettingsValues {
   approvalPolicy: string;
 }
 
-export type HostToWebview =
-  | {
-      type: 'state';
-      busy: boolean;
-      runtime: string;
-      model: string;
-      provider?: string;
-      workspaceRoot?: string;
-    }
-  | { type: 'context'; context: ContextInfo }
-  | { type: 'settings'; values: SettingsValues }
-  | { type: 'settings.open' }
-  | { type: 'settings.saved' }
-  | { type: 'settings.error'; message: string }
+export interface SessionSummary {
+  id: string;
+  title: string;
+  busy: boolean;
+}
+
+/**
+ * Events that belong to one conversation. They are recorded by the host and
+ * replayed when a webview surface (sidebar or editor panel) attaches or when
+ * the user switches sessions.
+ */
+export type SessionEvent =
+  | { type: 'user.message'; text: string }
   | { type: 'busy'; busy: boolean }
   | { type: 'turn.start'; turnId: string }
   | { type: 'assistant.delta'; text: string }
@@ -70,8 +69,26 @@ export type HostToWebview =
   | { type: 'approval.cancelled'; id: string }
   | { type: 'turn.end'; reason: StopReason }
   | { type: 'error'; code?: string; message: string }
-  | { type: 'log'; text: string }
-  | { type: 'clear' };
+  | { type: 'log'; text: string };
+
+export type HostToWebview =
+  | {
+      type: 'state';
+      busy: boolean;
+      runtime: string;
+      model: string;
+      provider?: string;
+      workspaceRoot?: string;
+    }
+  | { type: 'sessions'; sessions: SessionSummary[]; activeId: string }
+  | { type: 'session.load'; id: string; events: SessionEvent[] }
+  | { type: 'context'; context: ContextInfo }
+  | { type: 'settings'; values: SettingsValues }
+  | { type: 'settings.open' }
+  | { type: 'settings.saved' }
+  | { type: 'settings.error'; message: string }
+  | { type: 'clear' }
+  | SessionEvent;
 
 export type WebviewToHost =
   | { type: 'ready' }
@@ -89,7 +106,10 @@ export type WebviewToHost =
     }
   | { type: 'openFile'; path: string }
   | { type: 'openExternal'; url: string }
+  | { type: 'openEditor' }
   | { type: 'showLog' }
   | { type: 'settings.request' }
   | { type: 'settings.save'; values: SettingsValues }
-  | { type: 'newSession' };
+  | { type: 'session.new' }
+  | { type: 'session.select'; id: string }
+  | { type: 'session.close'; id: string; confirm: boolean };

@@ -270,6 +270,8 @@ UI-1 展示 patch 文本、上下文显式勾选、vanilla TS/CSS。
 | 审批文件策略 | `agentbox.files.denyWrite` 路径 deny；命令垃圾标记 deny；浏览器命令 confirm；仅在 approval.request 时生效 |
 | 任务 profile | simple 8/90s、code 20/180s、research 30/300s；设置浮层切换；显式 limits 可覆盖 |
 | 循环检测 | 相同 tool+args 连续失败 2 次或连续失败 4 次 → abort；成功重置 |
+| 多会话 | 顶栏下方会话标签栏：新建（＋）、切换、长按 `×` 0.65s 关闭（外圈进度动画）；每个会话独立 `RuntimeController` / Codex app-server 进程 / transcript / token 统计；同一时刻只允许一个会话运行；会话仅保存在扩展内存中 |
+| 编辑器面板 | 顶栏 **⧉** / 视图标题栏菜单 / `AgentBox: Open in Editor` 使用 `WebviewPanel` 打开同一会话，可像文件一样拖动、拆分到编辑器组；侧边栏与面板共享会话事件，`session.load` 回放 transcript |
 | 布局 | transcript/composer 左右 18px 留白；窄屏 14px；上下文改为 SVG 图标切换；输入框自动增高；发送/取消合并为右侧图标按钮 |
 | 流式文本 | `text.delta` → `assistant.delta` → Markdown 增量渲染（50ms 节流） |
 | 思考动画 | “思考中… / 生成中… / 执行工具…” 三点动画；状态栏运行脉冲；reduced-motion 兼容 |
@@ -287,10 +289,11 @@ UI-1 展示 patch 文本、上下文显式勾选、vanilla TS/CSS。
 | 安全 | CSP + nonce；DOMPurify 白名单；外链走 `vscode.env.openExternal`；密钥不下发 |
 | 降级 | 保留 OutputChannel + 模态审批；`Run Turn` 与侧栏互斥 |
 
-**验证**：`extension` 62 个测试通过（controller 11、settings 7、chat-view 12、
-timeline 5、context 5、webview-ui 5、bundle 1）；1 个真实 Codex 集成测试（`V2_E2E=1`）
+**验证**：`extension` 67 个测试通过（controller 11、settings 7、chat-view 17、
+timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、
+loop-detector 4、task-profile 2、bundle 1）；1 个真实 Codex 集成测试（`V2_E2E=1`）
 在收尾时重新运行通过（Codex + DeepSeek、合成工作区、9.25s）。
 VSIX 隔离安装成功。
 
-**未纳入 UI-1（UI-2 候选）**：transcript 持久化、多会话、原生 diff、重试、
+**未纳入 UI-1（UI-2 候选）**：transcript/会话持久化、原生 diff、重试、
 token/耗时统计、Key 设置面板。

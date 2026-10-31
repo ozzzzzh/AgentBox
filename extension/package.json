@@ -1,7 +1,7 @@
 {
   "name": "agentbox-vscode",
   "displayName": "AgentBox",
-  "description": "AgentBox: Codex app-server runtime with a webview chat sidebar, inline approvals, and file context.",
+  "description": "AgentBox: Codex app-server runtime with a multi-session webview chat sidebar, inline approvals, and file context.",
   "version": "0.3.0",
   "publisher": "agentbox",
   "private": true,
@@ -35,10 +35,30 @@
         }
       ]
     },
+    "menus": {
+      "view/title": [
+        {
+          "command": "agentbox.openInEditor",
+          "when": "view == agentbox.chat",
+          "group": "navigation@1"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "agentbox.openChat",
         "title": "AgentBox: Open Chat",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.openInEditor",
+        "title": "AgentBox: Open in Editor",
+        "category": "AgentBox",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "agentbox.focusSidebar",
+        "title": "AgentBox: Focus Sidebar",
         "category": "AgentBox"
       },
       {

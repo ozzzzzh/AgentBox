@@ -3,6 +3,8 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 import * as vscode from 'vscode';
 import type {
   HostToWebview,
+  SessionEvent,
+  SessionSummary,
   SettingsValues,
   WebviewToHost,
 } from './chat-protocol';
@@ -55,6 +57,32 @@ function isIgnoredWatchPath(path: string): boolean {
 
 const MAX_LOG_CHARS = 20_000;
 
+interface ChatSession {
+  id: string;
+  title: string;
+  controller?: RuntimeController;
+  ui?: WebviewTurnUi;
+  root?: string;
+  signature?: string;
+  changedThisTurn: Set<string>;
+  /** Session-scoped UI events, replayed into each webview surface. */
+  events: SessionEvent[];
+}
+
+interface ChatSurface {
+  id: number;
+  webview: vscode.Webview;
+  post(message: HostToWebview): void;
+  dispose(): void;
+}
+
+function truncateTitle(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  return normalized.length <= 24
+    ? normalized
+    : `${normalized.slice(0, 24)}…`;
+}
+
 function stringifyForLog(value: unknown): string {
   let text: string;
   try {
@@ -70,11 +98,11 @@ function stringifyForLog(value: unknown): string {
 export class ChatViewProvider
   implements vscode.WebviewViewProvider, vscode.Disposable
 {
-  private view: vscode.WebviewView | undefined;
-  private controller: RuntimeController | undefined;
-  private ui: WebviewTurnUi | undefined;
-  private root: string | undefined;
-  private signature: string | undefined;
+  private surfaces: ChatSurface[] = [];
+  private nextSurfaceId = 1;
+  private panel: vscode.WebviewPanel | undefined;
+  private sessions: ChatSession[] = [];
+  private activeSessionId = '';
   private runtimeId = 'codex';
   private modelLabel = '';
   private providerLabel: string | undefined;
@@ -85,7 +113,6 @@ export class ChatViewProvider
   private startingSession = false;
   private cancelRequested = false;
   private pendingSettingsOpen = false;
-  private readonly changedThisTurn = new Set<string>();
   private readonly disposables: vscode.Disposable[] = [];
   private readonly output: vscode.OutputChannel;
 
@@ -96,39 +123,87 @@ export class ChatViewProvider
   ) {
     this.output = vscode.window.createOutputChannel('AgentBox Chat');
     this.refreshLabels();
+    this.sessions = [this.createSession()];
+    this.activeSessionId = this.sessions[0]!.id;
 
     this.disposables.push(
       vscode.window.onDidChangeActiveTextEditor(() => this.postContext()),
       vscode.window.onDidChangeTextEditorSelection(() => this.postContext()),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
         const root = this.currentRoot();
-        if (root !== this.root) {
-          void this.disposeSession();
-          this.post({ type: 'clear' });
-          this.postState();
-          this.postContext();
+        if (root !== this.activeSession.root) {
+          void this.reset();
         }
       })
     );
   }
 
   resolveWebviewView(view: vscode.WebviewView): void {
-    this.view = view;
-    view.webview.options = {
+    const surface = this.attachSurface(view.webview);
+    view.onDidDispose(() => surface.dispose());
+  }
+
+  /** Open the same chat in an editor tab so it can be dragged/split like a file. */
+  async openInEditor(): Promise<void> {
+    if (this.panel !== undefined) {
+      this.panel.reveal(vscode.ViewColumn.Active);
+      return;
+    }
+    const panel = vscode.window.createWebviewPanel(
+      'agentbox.chat.panel',
+      'AgentBox',
+      vscode.ViewColumn.Active,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [
+          vscode.Uri.joinPath(this.extensionUri, 'media'),
+          vscode.Uri.joinPath(this.extensionUri, 'dist'),
+        ],
+      }
+    );
+    this.panel = panel;
+    const surface = this.attachSurface(panel.webview);
+    panel.onDidDispose(() => {
+      surface.dispose();
+      this.panel = undefined;
+    });
+  }
+
+  private attachSurface(webview: vscode.Webview): ChatSurface {
+    webview.options = {
       enableScripts: true,
       localResourceRoots: [
         vscode.Uri.joinPath(this.extensionUri, 'media'),
         vscode.Uri.joinPath(this.extensionUri, 'dist'),
       ],
     };
-    view.webview.html = this.renderHtml(view.webview);
-    view.webview.onDidReceiveMessage((message: unknown) => {
-      void this.handleMessage(message);
+    webview.html = this.renderHtml(webview);
+
+    const surface: ChatSurface = {
+      id: this.nextSurfaceId++,
+      webview,
+      post: (message) => {
+        try {
+          void webview.postMessage(message);
+        } catch {
+          // The surface may be disposed between events.
+        }
+      },
+      dispose: () => {
+        const index = this.surfaces.indexOf(surface);
+        if (index >= 0) this.surfaces.splice(index, 1);
+        subscription.dispose();
+        if (this.surfaces.length === 0) {
+          void this.disposeAllSessions();
+        }
+      },
+    };
+    const subscription = webview.onDidReceiveMessage((message: unknown) => {
+      void this.handleMessage(surface, message);
     });
-    view.onDidDispose(() => {
-      this.view = undefined;
-      void this.disposeSession();
-    });
+    this.surfaces.push(surface);
+    return surface;
   }
 
   dispose(): void {
@@ -138,30 +213,56 @@ export class ChatViewProvider
     }
     this.disposables.length = 0;
     this.disposeWatcher();
-    void this.disposeSession();
+    this.panel?.dispose();
+    this.panel = undefined;
+    this.surfaces.length = 0;
+    void this.disposeAllSessions();
     this.output.dispose();
-    this.view = undefined;
   }
 
-  /** Drop the current runtime and start a fresh session in the panel. */
+  private createSession(): ChatSession {
+    return {
+      id: `s${randomBytes(6).toString('hex')}`,
+      title: '新会话',
+      changedThisTurn: new Set<string>(),
+      events: [],
+    };
+  }
+
+  private get activeSession(): ChatSession {
+    return (
+      this.sessions.find((session) => session.id === this.activeSessionId) ??
+      this.sessions[0]!
+    );
+  }
+
+  /** Drop all runtimes and start a fresh session in the panel. */
   async reset(): Promise<void> {
-    await this.disposeSession();
+    await this.disposeAllSessions();
+    this.sessions = [this.createSession()];
+    this.activeSessionId = this.sessions[0]!.id;
     this.post({ type: 'clear' });
+    this.postSessions();
+    this.postSessionLoad(this.activeSession);
     this.postState();
     this.postContext();
   }
 
   get busy(): boolean {
-    return this.startingSession || (this.controller?.busy ?? false);
+    return (
+      this.startingSession ||
+      this.sessions.some((session) => session.controller?.busy === true)
+    );
   }
 
   async cancel(): Promise<void> {
-    if (this.controller === undefined) {
+    const controller = this.activeSession.controller;
+    if (controller === undefined) {
       // Runtime/sandbox startup can take seconds; honor Stop once it is ready.
       if (this.startingSession) this.cancelRequested = true;
       return;
     }
-    await this.controller.cancel();
+    await controller.cancel();
   }
 
   showOutput(): void {
@@ -285,11 +386,8 @@ export class ChatViewProvider
         `model=${model} approval=${approvalPolicy}`
     );
 
-    await this.disposeSession();
     this.refreshLabels();
-    this.post({ type: 'clear' });
-    this.postState();
-    this.postContext();
+    await this.reset();
     this.post({ type: 'settings', values: this.readSettingsValues() });
     this.post({ type: 'settings.saved' });
     this.post({ type: 'log', text: '设置已保存，会话已重置。' });
@@ -299,34 +397,43 @@ export class ChatViewProvider
     return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   }
 
-  private async disposeSession(): Promise<void> {
-    const current = this.controller;
-    this.controller = undefined;
-    this.signature = undefined;
+  private async disposeSession(session: ChatSession): Promise<void> {
+    const current = session.controller;
+    session.controller = undefined;
+    session.signature = undefined;
     await current?.dispose();
-    this.ui?.dispose();
-    this.ui = undefined;
-    this.root = undefined;
-    this.disposeWatcher();
-    this.changedThisTurn.clear();
+    session.ui?.dispose();
+    session.ui = undefined;
+    session.root = undefined;
+    session.changedThisTurn.clear();
   }
 
-  private async getSession(root: string): Promise<RuntimeController> {
+  private async disposeAllSessions(): Promise<void> {
+    await Promise.all(this.sessions.map((session) => this.disposeSession(session)));
+    this.disposeWatcher();
+  }
+
+  private async getSession(
+    session: ChatSession,
+    root: string
+  ): Promise<RuntimeController> {
     const bundle = await createAgentRuntime(this.context, root);
     this.runtimeId = bundle.runtimeId;
     this.modelLabel = bundle.modelLabel;
     this.providerLabel = bundle.providerLabel;
 
     if (
-      this.controller !== undefined &&
-      this.root === root &&
-      this.signature === bundle.signature
+      session.controller !== undefined &&
+      session.root === root &&
+      session.signature === bundle.signature
     ) {
-      return this.controller;
+      return session.controller;
     }
 
-    await this.disposeSession();
-    const webviewUi = new WebviewTurnUi((message) => this.emit(message));
+    await this.disposeSession(session);
+    const webviewUi = new WebviewTurnUi((message) =>
+      this.emit(session, message)
+    );
     const loopOptions = readLoopDetectionOptions();
     const next = new RuntimeController({
       runtime: bundle.runtime,
@@ -347,10 +454,10 @@ export class ChatViewProvider
       throw error;
     }
 
-    this.controller = next;
-    this.ui = webviewUi;
-    this.root = root;
-    this.signature = bundle.signature;
+    session.controller = next;
+    session.ui = webviewUi;
+    session.root = root;
+    session.signature = bundle.signature;
     if (bundle.projectInstructionsPath !== undefined) {
       this.output.appendLine(
         `[project] ${bundle.projectInstructionsPath}${
@@ -359,22 +466,69 @@ export class ChatViewProvider
       );
     }
     this.ensureWatcher(root);
+    this.postSessions();
     this.postState();
     return next;
   }
 
-  private async handleMessage(raw: unknown): Promise<void> {
+  private sessionsMessage(): Extract<HostToWebview, { type: 'sessions' }> {
+    const sessions: SessionSummary[] = this.sessions.map((session) => ({
+      id: session.id,
+      title: session.title,
+      busy: session.controller?.busy === true,
+    }));
+    return {
+      type: 'sessions',
+      sessions,
+      activeId: this.activeSessionId,
+    };
+  }
+
+  private postSessions(): void {
+    this.post(this.sessionsMessage());
+  }
+
+  private postSessionsTo(surface: ChatSurface): void {
+    surface.post(this.sessionsMessage());
+  }
+
+  private postSessionLoad(session: ChatSession): void {
+    this.post({
+      type: 'session.load',
+      id: session.id,
+      events: session.events,
+    });
+  }
+
+  private postSessionLoadTo(surface: ChatSurface, session: ChatSession): void {
+    surface.post({
+      type: 'session.load',
+      id: session.id,
+      events: session.events,
+    });
+  }
+
+  private async handleMessage(
+    surface: ChatSurface,
+    raw: unknown
+  ): Promise<void> {
     if (!isRecord(raw) || typeof raw.type !== 'string') return;
 
     try {
       switch (raw.type as WebviewToHost['type']) {
         case 'ready':
+          this.postSessionsTo(surface);
+          this.postSessionLoadTo(surface, this.activeSession);
           this.postState();
           this.postContext();
           if (this.pendingSettingsOpen) {
             this.pendingSettingsOpen = false;
             this.post({ type: 'settings.open' });
           }
+          return;
+
+        case 'openEditor':
+          await this.openInEditor();
           return;
 
         case 'prompt': {
@@ -392,13 +546,22 @@ export class ChatViewProvider
             });
             return;
           }
+          if (this.busy) {
+            this.post({
+              type: 'error',
+              message: '另一个会话正在运行，请先停止它。',
+            });
+            return;
+          }
+          const chatSession = this.activeSession;
           const includeFile = raw.includeFile === true;
           const includeSelection = raw.includeSelection === true;
+          this.emit(chatSession, { type: 'user.message', text });
           this.startingSession = true;
           this.cancelRequested = false;
-          let session: RuntimeController;
+          let controller: RuntimeController;
           try {
-            session = await this.getSession(root);
+            controller = await this.getSession(chatSession, root);
           } finally {
             this.startingSession = false;
           }
@@ -407,19 +570,23 @@ export class ChatViewProvider
             this.post({ type: 'busy', busy: false });
             return;
           }
+          if (chatSession.title === '新会话') {
+            chatSession.title = truncateTitle(text);
+            this.postSessions();
+          }
           const context = this.buildActiveContext(root, includeFile, includeSelection);
-          await session.runTurn(text, context);
+          await controller.runTurn(text, context);
           return;
         }
 
         case 'cancel':
-          await this.controller?.cancel();
+          await this.activeSession.controller?.cancel();
           return;
 
         case 'approval.response': {
           const id = typeof raw.id === 'string' ? raw.id : '';
           const decision = raw.decision === 'allow' ? 'allow' : 'deny';
-          if (id !== '') this.ui?.resolveApproval(id, decision);
+          if (id !== '') this.activeSession.ui?.resolveApproval(id, decision);
           return;
         }
 
@@ -451,11 +618,20 @@ export class ChatViewProvider
           await this.saveSettings(raw.values);
           return;
 
-        case 'newSession':
-          await this.disposeSession();
-          this.post({ type: 'clear' });
-          this.postState();
-          this.postContext();
+        case 'session.new':
+          await this.newSession();
+          return;
+
+        case 'session.select':
+          if (typeof raw.id === 'string') {
+            await this.selectSession(raw.id);
+          }
+          return;
+
+        case 'session.close':
+          if (typeof raw.id === 'string' && raw.confirm === true) {
+            await this.closeSession(raw.id);
+          }
           return;
 
         default:
@@ -467,6 +643,59 @@ export class ChatViewProvider
       this.post({ type: 'error', message });
       this.post({ type: 'busy', busy: false });
     }
+  }
+
+  private async newSession(): Promise<void> {
+    if (this.busy) {
+      this.post({ type: 'error', message: '请先停止正在运行的会话。' });
+      return;
+    }
+    const session = this.createSession();
+    this.sessions.push(session);
+    this.activeSessionId = session.id;
+    this.postSessions();
+    this.postSessionLoad(session);
+    this.postState();
+    this.postContext();
+  }
+
+  private async selectSession(id: string): Promise<void> {
+    if (id === this.activeSessionId) return;
+    const target = this.sessions.find((session) => session.id === id);
+    if (target === undefined) return;
+    if (this.busy) {
+      this.post({ type: 'error', message: '请先停止正在运行的会话再切换。' });
+      return;
+    }
+    this.activeSessionId = id;
+    this.postSessions();
+    this.postSessionLoad(target);
+    this.postState();
+    this.postContext();
+  }
+
+  private async closeSession(id: string): Promise<void> {
+    if (this.busy) {
+      this.post({ type: 'error', message: '请先停止正在运行的会话。' });
+      return;
+    }
+    const index = this.sessions.findIndex((session) => session.id === id);
+    if (index < 0) return;
+    const removed = this.sessions[index]!;
+    this.sessions.splice(index, 1);
+    await this.disposeSession(removed);
+
+    if (this.sessions.length === 0) {
+      this.sessions.push(this.createSession());
+    }
+    if (this.activeSessionId === id) {
+      const next = this.sessions[Math.min(index, this.sessions.length - 1)]!;
+      this.activeSessionId = next.id;
+    }
+    this.postSessions();
+    this.postSessionLoad(this.activeSession);
+    this.postState();
+    this.postContext();
   }
 
   private buildActiveContext(
@@ -510,7 +739,7 @@ export class ChatViewProvider
   }
 
   private postContext(): void {
-    if (this.view === undefined) return;
+    if (this.surfaces.length === 0) return;
     const editor = vscode.window.activeTextEditor;
     if (editor === undefined || editor.document.uri.scheme !== 'file') {
       this.post({ type: 'context', context: {} });
@@ -553,10 +782,12 @@ export class ChatViewProvider
    * within a turn: Codex `fileChange` already renders chips in its tool card,
    * while a VS Code watcher covers shell writes that Codex does not report.
    */
-  private emit(message: HostToWebview): void {
+  private emit(session: ChatSession, message: SessionEvent): void {
     this.logEvent(message);
+    let outgoing: SessionEvent = message;
+
     if (message.type === 'turn.start') {
-      this.changedThisTurn.clear();
+      session.changedThisTurn.clear();
     } else if (
       message.type === 'tool.start' &&
       message.name === 'fileChange' &&
@@ -567,25 +798,27 @@ export class ChatViewProvider
         if (!isRecord(change) || typeof change.path !== 'string') {
           return change;
         }
-        const path = this.normalizePath(change.path);
-        this.changedThisTurn.add(path);
+        const path = this.normalizePath(session, change.path);
+        session.changedThisTurn.add(path);
         return { ...change, path };
       });
       // File chips must stay workspace-relative so the host can open them.
-      this.post({ ...message, args: { ...message.args, changes } });
-      return;
+      outgoing = { ...message, args: { ...message.args, changes } };
     } else if (message.type === 'file.changed') {
-      const path = this.normalizePath(message.path);
-      if (this.changedThisTurn.has(path)) return;
-      this.changedThisTurn.add(path);
-      this.post({ ...message, path });
-      return;
+      const path = this.normalizePath(session, message.path);
+      if (session.changedThisTurn.has(path)) return;
+      session.changedThisTurn.add(path);
+      outgoing = { ...message, path };
     }
-    this.post(message);
+
+    session.events.push(outgoing);
+    if (session.id === this.activeSessionId) {
+      this.post(outgoing);
+    }
   }
 
   /** Full tool details live in the "AgentBox Chat" output channel. */
-  private logEvent(message: HostToWebview): void {
+  private logEvent(message: SessionEvent): void {
     switch (message.type) {
       case 'turn.start':
         this.output.appendLine(`[turn.start] ${message.turnId}`);
@@ -617,10 +850,10 @@ export class ChatViewProvider
     }
   }
 
-  private normalizePath(path: string): string {
-    if (this.root === undefined) return path;
-    const absolute = isAbsolute(path) ? path : resolve(this.root, path);
-    return toWorkspacePath(this.root, absolute) ?? path;
+  private normalizePath(session: ChatSession, path: string): string {
+    if (session.root === undefined) return path;
+    const absolute = isAbsolute(path) ? path : resolve(session.root, path);
+    return toWorkspacePath(session.root, absolute) ?? path;
   }
 
   private ensureWatcher(root: string): void {
@@ -649,17 +882,18 @@ export class ChatViewProvider
   }
 
   private onWorkspaceFileChanged(root: string, uri: vscode.Uri): void {
-    if (!this.busy) return;
+    const session = this.activeSession;
+    if (session.controller?.busy !== true) return;
     const path = toWorkspacePath(root, uri.fsPath);
     if (path === undefined || isIgnoredWatchPath(path)) return;
-    this.emit({ type: 'file.changed', path });
+    this.emit(session, { type: 'file.changed', path });
   }
 
   private postState(): void {
     const root = this.currentRoot();
     this.post({
       type: 'state',
-      busy: this.controller?.busy ?? false,
+      busy: this.activeSession.controller?.busy ?? false,
       runtime: this.runtimeId,
       model: this.modelLabel,
       provider: this.providerLabel,
@@ -669,10 +903,8 @@ export class ChatViewProvider
 
   private post(message: HostToWebview): void {
     if (this.disposed) return;
-    try {
-      void this.view?.webview.postMessage(message);
-    } catch {
-      // View may be disposed between events.
+    for (const surface of [...this.surfaces]) {
+      surface.post(message);
     }
   }
 
@@ -734,9 +966,13 @@ export class ChatViewProvider
         <span>AgentBox</span>
       </div>
       <div class="meta"></div>
-      <button id="new" class="icon-button" title="新建会话" aria-label="新建会话">＋</button>
+      <button id="open-editor" class="icon-button" title="在编辑器中打开（可拖动布局）" aria-label="在编辑器中打开">⧉</button>
       <button id="settings" class="icon-button" title="设置" aria-label="设置">⚙</button>
     </header>
+    <div class="session-row">
+      <div id="session-bar" class="session-bar" role="tablist" aria-label="会话列表"></div>
+      <button id="new" class="session-new" title="新建会话" aria-label="新建会话">＋</button>
+    </div>
     <div id="chat-area" class="chat-area">
       <main id="transcript" class="transcript" aria-live="polite" aria-label="对话记录"></main>
       <nav id="question-nav" class="question-nav" aria-label="用户问题导航" hidden></nav>

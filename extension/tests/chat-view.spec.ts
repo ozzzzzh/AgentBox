@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   messages: [] as Array<Record<string, unknown>>,
   receiveHandler: undefined as ((message: unknown) => void) | undefined,
   watchers: [] as Array<Record<string, unknown>>,
+  panels: [] as Array<Record<string, unknown>>,
   executeCommand: async (): Promise<undefined> => undefined,
 }));
 
@@ -43,6 +44,7 @@ vi.mock('vscode', () => {
 
   return {
     Uri,
+    ViewColumn: { Active: -1 },
     StatusBarAlignment: { Left: 1 },
     ProgressLocation: { Notification: 15 },
     ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
@@ -74,6 +76,37 @@ vi.mock('vscode', () => {
         _options: unknown,
         task: () => Promise<unknown>
       ): Promise<unknown> => task(),
+      createWebviewPanel: (): Record<string, unknown> => {
+        let disposeHandler: (() => void) | undefined;
+        const webview = {
+          options: undefined,
+          html: '',
+          cspSource: 'vscode-resource://agentbox',
+          postMessage: async (message: unknown): Promise<boolean> => {
+            state.messages.push(message as Record<string, unknown>);
+            return true;
+          },
+          onDidReceiveMessage: (): { dispose(): void } => ({
+            dispose(): void {},
+          }),
+          asWebviewUri: (uri: unknown): unknown => uri,
+        };
+        const panel: Record<string, unknown> = {
+          webview,
+          reveal(): void {},
+          onDidDispose: (
+            handler: () => void
+          ): { dispose(): void } => {
+            disposeHandler = handler;
+            return { dispose(): void {} };
+          },
+          dispose(): void {
+            disposeHandler?.();
+          },
+        };
+        state.panels.push(panel);
+        return panel;
+      },
     },
     workspace: {
       get workspaceFolders(): typeof state.workspaceFolders {
@@ -214,6 +247,7 @@ describe('ChatViewProvider', () => {
     expect(webview.html).toContain('id="timeline-tokens"');
     expect(webview.html).toContain('id="question-nav"');
     expect(webview.html).toContain('id="question-tooltip"');
+    expect(webview.html).toContain('id="session-bar"');
     expect(webview.html).toContain('id="lane-thinking"');
     expect(webview.html).toContain('id="lane-generation"');
     expect(webview.html).toContain('id="lane-tool"');
@@ -342,6 +376,18 @@ describe('ChatViewProvider', () => {
     expect(busy[busy.length - 1]).toEqual({ type: 'busy', busy: false });
   });
 
+  it('opens the chat in a reusable editor panel', async () => {
+    resolveView();
+
+    await provider?.openInEditor();
+    await provider?.openInEditor();
+
+    expect(state.panels).toHaveLength(1);
+    const webview = state.panels[0]?.webview as { html: string };
+    expect(webview.html).toContain('id="session-bar"');
+    expect(webview.html).toContain('id="open-editor"');
+  });
+
   it('opens the in-panel settings overlay', async () => {
     resolveView();
 
@@ -444,5 +490,109 @@ describe('ChatViewProvider', () => {
     await Promise.resolve();
 
     expect(state.openedExternal).toEqual([]);
+  });
+
+  function lastSessions(): {
+    type: 'sessions';
+    sessions: Array<{ id: string; title: string; busy: boolean }>;
+    activeId: string;
+  } {
+    const message = [...state.messages]
+      .reverse()
+      .find((item) => item.type === 'sessions') as
+      | {
+          type: 'sessions';
+          sessions: Array<{ id: string; title: string; busy: boolean }>;
+          activeId: string;
+        }
+      | undefined;
+    if (message === undefined) throw new Error('no sessions message');
+    return message;
+  }
+
+  function lastLoad(): {
+    type: 'session.load';
+    id: string;
+    events: Array<{ type: string }>;
+  } {
+    const message = [...state.messages]
+      .reverse()
+      .find((item) => item.type === 'session.load') as
+      | {
+          type: 'session.load';
+          id: string;
+          events: Array<{ type: string }>;
+        }
+      | undefined;
+    if (message === undefined) throw new Error('no session.load message');
+    return message;
+  }
+
+  it('publishes and loads the initial session', () => {
+    resolveView();
+
+    state.receiveHandler?.({ type: 'ready' });
+
+    const sessions = lastSessions();
+    expect(sessions.sessions).toHaveLength(1);
+    expect(sessions.sessions[0]?.title).toBe('新会话');
+    expect(sessions.activeId).toBe(sessions.sessions[0]?.id);
+    expect(lastLoad()).toEqual({
+      type: 'session.load',
+      id: sessions.activeId,
+      events: [],
+    });
+  });
+
+  it('creates, switches, and closes sessions', async () => {
+    resolveView();
+    state.receiveHandler?.({ type: 'ready' });
+    const firstId = lastSessions().activeId;
+
+    state.receiveHandler?.({ type: 'session.new' });
+    await waitFor(() => lastSessions().sessions.length === 2);
+    const second = lastSessions();
+    expect(second.activeId).not.toBe(firstId);
+
+    state.receiveHandler?.({ type: 'session.select', id: firstId });
+    await waitFor(() => lastSessions().activeId === firstId);
+    expect(lastSessions().sessions).toHaveLength(2);
+
+    state.receiveHandler?.({
+      type: 'session.close',
+      id: firstId,
+      confirm: true,
+    });
+    await waitFor(() => lastSessions().sessions.length === 1);
+    const remaining = lastSessions();
+    expect(remaining.activeId).toBe(remaining.sessions[0]?.id);
+    expect(remaining.activeId).not.toBe(firstId);
+  });
+
+  it('ignores an unconfirmed session close', async () => {
+    resolveView();
+    state.receiveHandler?.({ type: 'ready' });
+    const firstId = lastSessions().activeId;
+
+    state.receiveHandler?.({ type: 'session.close', id: firstId });
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+    expect(lastSessions().sessions).toHaveLength(1);
+    expect(lastSessions().activeId).toBe(firstId);
+  });
+
+  it('titles a session from its first prompt', async () => {
+    resolveView();
+    state.receiveHandler?.({ type: 'ready' });
+
+    state.receiveHandler?.({
+      type: 'prompt',
+      text: 'demo',
+      includeFile: false,
+      includeSelection: false,
+    });
+
+    await waitFor(() => lastSessions().sessions[0]?.title === 'demo');
+    expect(lastSessions().sessions[0]?.title).toBe('demo');
   });
 });

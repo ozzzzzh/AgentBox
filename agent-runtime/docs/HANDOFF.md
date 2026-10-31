@@ -56,7 +56,7 @@ AgentBox 的目标不是"再造一个 coding agent"，而是：
 ### 不做
 
 - 知识库、Skill Registry、采集 pipeline、文档生成。
-- UI-2/UI-3 之后的完整产品 UI（多会话/历史、原生 diff、知识/资产视图）；
+- UI-2/UI-3 之后的完整产品 UI（会话持久化/历史、原生 diff、知识/资产视图）；
   UI-1 侧边聊天面板已完成（2026-10-31）。
 - OpenClaw adapter、修改 `pluginVersion/`。
 - 自研 agent loop、MCP server、多 agent、并发会话。
@@ -193,12 +193,12 @@ VS Code 集成在下一阶段通过消费者/adapter 完成。
 | `tests/events.spec.ts` / `turn.spec.ts` | ✅ **M4**：18 个测试 |
 | `tests/contract/fake.spec.ts` | ✅ **M5**：14 个测试（含 9 个通用契约用例） |
 | `package.json` / `tsconfig.json` | ✅ 脚手架 + `check:boundaries` / `verify` + `./testing` 导出 |
-| `../../extension/` | ✅ **UI-1**：Webview 侧栏、左右留白、图标上下文切换（文件/选区默认选中）、右侧居中问题导航（圆点/附近 10 个窗口/20 字预览）、内嵌设置浮层、内置工作流/PowerShell/文件卫生提示词、AGENTS.md 项目指令、审批文件策略、任务 profile、工具循环检测、思考计时、Markdown 分级/左右对齐角色标签/分隔线/代码复制、发送/取消合并、输入框上方三条泳道可折叠时间线、色块统计、token 用量、命令不进对话、watcher 兜底；保留输出通道降级 |
+| `../../extension/` | ✅ **UI-1**：Webview 侧栏 + 可拖动编辑器面板、多会话标签栏（新建/切换/长按关闭，独立 Codex 进程）、左右留白、图标上下文切换（文件/选区默认选中）、右侧居中问题导航（圆点/附近 10 个窗口/20 字预览）、内嵌设置浮层、内置工作流/PowerShell/文件卫生提示词、AGENTS.md 项目指令、审批文件策略、任务 profile、工具循环检测、思考计时、Markdown 分级/左右对齐角色标签/分隔线/代码复制、发送/取消合并、输入框上方三条泳道可折叠时间线、色块统计、token 用量、命令不进对话、watcher 兜底；保留输出通道降级 |
 | `extension/src/chat-view.ts` / `chat-protocol.ts` / `ui/webview-ui.ts` | ✅ **UI-1**：侧栏宿主、消息协议、结构化 TurnUi |
 | `extension/src/context.ts` / `webview/chat.ts` / `webview/timeline.ts` / `media/chat.css` | ✅ **UI-1**：上下文拼接、vanilla 前端、活动时间线模型、主题样式 |
-| `../../extension/agentbox-0.3.0.vsix` | ✅ 93.21 KB（9 files），隔离 `--extensions-dir` 安装成功 |
+| `../../extension/agentbox-0.3.0.vsix` | ✅ 96.46 KB（9 files），隔离 `--extensions-dir` 安装成功 |
 | `npm run verify`（runtime） | ✅ 141 个测试通过（含 CLI 15、eval 9） |
-| `npm run verify`（extension） | ✅ 62 个测试通过（controller 11、settings 7、chat-view 12、timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、bundle 1） |
+| `npm run verify`（extension） | ✅ 67 个测试通过（controller 11、settings 7、chat-view 17、timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、bundle 1） |
 | 真实 Codex 集成（`V2_E2E=1`） | ✅ UI-1 收尾重跑通过（DeepSeek、合成工作区、9.25s） |
 | 10 条 eval | ✅ Codex + DeepSeek 基线 **9/10（90%）** |
 | 真实 V2 controller + Codex | ✅ `V2_E2E=1` 手动集成测试通过（写文件 8.7s） |
@@ -253,10 +253,10 @@ P0 当前结论：
 
 1. 读 `README.md`、`docs/MILESTONE-1.md`、`docs/ARCHITECTURE.md`、`docs/MODULES.md`、
    `docs/MODULE-STATUS.md`、`docs/COMPATIBILITY.md`、`IMPLEMENTATION_PLAN.md`。
-2. **UI-0 评审**：✅ 已确认 [UI-PROPOSAL.md](UI-PROPOSAL.md)（Webview、1.85、单会话、
+2. **UI-0 评审**：✅ 已确认 [UI-PROPOSAL.md](UI-PROPOSAL.md)（Webview、1.85、
    内联审批、patch 文本、显式上下文、中文 UI）。
-3. **UI-1**：✅ 已完成侧边 Webview + 流式/工具卡/内联审批/Stop/上下文/watcher 兜底。
-4. **UI-2**：transcript 持久化、原生 diff、重试/错误恢复（token/耗时已由时间线提供）。
+3. **UI-1**：✅ 已完成侧边 Webview + 多会话 + 流式/工具卡/内联审批/Stop/上下文/watcher 兜底。
+4. **UI-2**：transcript/会话持久化、原生 diff、重试/错误恢复（token/耗时已由时间线提供）。
 5. **UI-3**：Skill 库 / 知识面板（等后端契约）。
 6. **M7**（可选/暂缓）：OpenCode adapter → V3；需要双 runtime 时再做。
 7. **内网 Qwen/Qwen3-Coder**：生产部署前确认。
@@ -288,7 +288,7 @@ UI 消费者继续只依赖 createRuntime + AgentEvent，不修改 adapter。
 - 事件契约决策 D1–D14 不得擅自更改；改契约先改 MODULES.md。
 - 端到端验证门见 MODULES.md §2.2：V2 已完成；UI-1 产物已隔离安装。
 - Codex app-server 为主，OpenCode server 为备；OpenClaw 弃用，不新增代码。
-- 本阶段不做知识/Skill 注入、不改 pluginVersion/；UI-2 之前不加多会话/持久化。
+- 本阶段不做知识/Skill 注入、不改 pluginVersion/；多会话已实现（内存态），持久化留到 UI-2。
 - P0 已完成；协议/沙箱/DeepSeek 结果见 docs/RUNTIME-PROBE.md，不要重复探测，
   除非升级 Codex/OpenCode 版本。
 - 环境：Windows 11、Node 24、PowerShell 5.1（无 pwsh）；DeepSeek 公网已获准，
