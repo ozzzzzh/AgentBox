@@ -891,10 +891,44 @@ input {
   line-height: 1.4;
 }
 
+.approval-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .approval-title,
 .error-title {
   font-weight: 600;
   font-size: 0.95em;
+}
+
+.approval-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.approval-details {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  font-size: 0.78em;
+  cursor: pointer;
+}
+
+.approval-details:hover {
+  text-decoration: underline;
+}
+
+.approval-card.collapsed {
+  gap: 0;
+  padding: 6px 8px;
 }
 
 .approval-actions {

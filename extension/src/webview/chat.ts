@@ -127,6 +127,9 @@ const approvalCards = new Map<
     status: HTMLElement;
     allow: HTMLButtonElement;
     deny: HTMLButtonElement;
+    body: HTMLElement;
+    actions: HTMLElement;
+    details: HTMLButtonElement;
   }
 >();
 
@@ -814,6 +817,19 @@ function createToolCard(
   return entry;
 }
 
+function collapseApprovalCard(entry: {
+  card: HTMLElement;
+  body: HTMLElement;
+  actions: HTMLElement;
+  details: HTMLButtonElement;
+}): void {
+  entry.card.classList.add('collapsed');
+  entry.body.hidden = true;
+  entry.actions.hidden = true;
+  entry.details.hidden = false;
+  entry.details.textContent = '详情';
+}
+
 function settleApprovalCard(
   id: string,
   text: string,
@@ -826,15 +842,27 @@ function settleApprovalCard(
   entry.deny.disabled = true;
   entry.status.textContent = text;
   entry.status.className = `approval-status ${kind}`;
+  collapseApprovalCard(entry);
 }
 
 function createApprovalCard(message: Extract<HostToWebview, { type: 'approval.request' }>): void {
   const card = document.createElement('div');
   card.className = 'approval-card';
 
+  const header = document.createElement('div');
+  header.className = 'approval-header';
   const title = document.createElement('div');
   title.className = 'approval-title';
   title.textContent = `需要审批：${message.name}`;
+  const status = document.createElement('span');
+  status.className = 'approval-status';
+  status.textContent = '等待中';
+  const details = document.createElement('button');
+  details.type = 'button';
+  details.className = 'approval-details';
+  details.textContent = '详情';
+  details.hidden = true;
+  header.append(title, status, details);
 
   const body = document.createElement('div');
   body.className = 'approval-body';
@@ -855,10 +883,23 @@ function createApprovalCard(message: Extract<HostToWebview, { type: 'approval.re
   const deny = document.createElement('button');
   deny.className = 'secondary';
   deny.textContent = '拒绝';
-  const status = document.createElement('span');
-  status.className = 'approval-status';
-  status.textContent = '等待中';
-  actions.append(allow, deny, status);
+  actions.append(allow, deny);
+
+  const entry = {
+    card,
+    status,
+    allow,
+    deny,
+    body,
+    actions,
+    details,
+  };
+
+  details.addEventListener('click', () => {
+    const expanded = !entry.body.hidden;
+    entry.body.hidden = expanded;
+    details.textContent = expanded ? '详情' : '收起';
+  });
 
   const decide = (decision: 'allow' | 'deny'): void => {
     if (card.dataset.done === '1') return;
@@ -867,15 +908,16 @@ function createApprovalCard(message: Extract<HostToWebview, { type: 'approval.re
     deny.disabled = true;
     status.textContent = decision === 'allow' ? '已允许' : '已拒绝';
     status.className = `approval-status ${decision}`;
+    collapseApprovalCard(entry);
     post({ type: 'approval.response', id: message.id, decision });
   };
 
   allow.addEventListener('click', () => decide('allow'));
   deny.addEventListener('click', () => decide('deny'));
 
-  card.append(title, body, actions);
+  card.append(header, body, actions);
   appendElement(card);
-  approvalCards.set(message.id, { card, status, allow, deny });
+  approvalCards.set(message.id, entry);
 }
 
 function addLog(text: string): void {

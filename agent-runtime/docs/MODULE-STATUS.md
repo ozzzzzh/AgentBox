@@ -602,7 +602,7 @@ npm run verify   # build + vitest + check-boundaries
   controller 11、settings 7、chat-view 17、timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、bundle 1。
 - 时间线模型测试：`tests/timeline.spec.ts`（LLM 推导、审批独立、失败标记、
   open span 延展、finish/reset）。
-- `npm run verify` 通过；`agentbox-0.3.0.vsix` 96.46 KB（9 files）。
+- `npm run verify` 通过；`agentbox-0.3.0.vsix` 96.67 KB（9 files）。
 - VSIX 隔离 `--extensions-dir` 安装成功。
 - 1 个真实 Codex 集成测试（`V2_E2E=1`）在 UI-1 收尾时重新运行通过：
   Codex + DeepSeek、合成临时工作区、9.25s。

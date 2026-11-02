@@ -282,7 +282,7 @@ UI-1 展示 patch 文本、上下文显式勾选、vanilla TS/CSS。
 | 代码复制 | Markdown 代码块右上角“复制”按钮，支持 clipboard API 与 execCommand 回退 |
 | 工具卡 | `tool.start/end` → 卡片、状态；`fileChange` 显示 patch；`commandExecution` / `run_shell` 不生成卡片，只进日志 |
 | 日志 | 完整 tool 参数/输出、turn、error 写入 `AgentBox Chat` 输出通道；卡片提供“查看完整日志” |
-| 内联审批 | `approval.request` → 卡片 Allow/Deny；turn 结束时卡片标记“已失效” |
+| 内联审批 | `approval.request` → 卡片 Allow/Deny；审批完成后自动折叠为单行（保留状态和“详情”展开）；turn 结束时未处理卡片标记“已失效” |
 | Stop | 停止按钮 / `agentbox.cancelTurn` → `RuntimeController.cancel()`；启动阶段也可取消 |
 | 上下文 | 当前文件与新选区默认选中、可取消；工作区外文件与选区不入上下文 |
 | 文件兜底 | VS Code `FileSystemWatcher` 在 turn 运行时上报 `file.changed`，按 turn 去重 |

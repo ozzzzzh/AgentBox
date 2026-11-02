@@ -196,7 +196,7 @@ VS Code 集成在下一阶段通过消费者/adapter 完成。
 | `../../extension/` | ✅ **UI-1**：Webview 侧栏 + 可拖动编辑器面板、多会话标签栏（新建/切换/长按关闭，独立 Codex 进程）、左右留白、图标上下文切换（文件/选区默认选中）、右侧居中问题导航（圆点/附近 10 个窗口/20 字预览）、内嵌设置浮层、内置工作流/PowerShell/文件卫生提示词、AGENTS.md 项目指令、审批文件策略、任务 profile、工具循环检测、思考计时、Markdown 分级/左右对齐角色标签/分隔线/代码复制、发送/取消合并、输入框上方三条泳道可折叠时间线、色块统计、token 用量、命令不进对话、watcher 兜底；保留输出通道降级 |
 | `extension/src/chat-view.ts` / `chat-protocol.ts` / `ui/webview-ui.ts` | ✅ **UI-1**：侧栏宿主、消息协议、结构化 TurnUi |
 | `extension/src/context.ts` / `webview/chat.ts` / `webview/timeline.ts` / `media/chat.css` | ✅ **UI-1**：上下文拼接、vanilla 前端、活动时间线模型、主题样式 |
-| `../../extension/agentbox-0.3.0.vsix` | ✅ 96.46 KB（9 files），隔离 `--extensions-dir` 安装成功 |
+| `../../extension/agentbox-0.3.0.vsix` | ✅ 96.67 KB（9 files），隔离 `--extensions-dir` 安装成功 |
 | `npm run verify`（runtime） | ✅ 141 个测试通过（含 CLI 15、eval 9） |
 | `npm run verify`（extension） | ✅ 67 个测试通过（controller 11、settings 7、chat-view 17、timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、bundle 1） |
 | 真实 Codex 集成（`V2_E2E=1`） | ✅ UI-1 收尾重跑通过（DeepSeek、合成工作区、9.25s） |
