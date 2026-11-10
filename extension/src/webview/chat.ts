@@ -37,8 +37,11 @@ const stopIcon = byId<SVGElement>('icon-stop');
 const newButton = byId<HTMLButtonElement>('new');
 const settingsButton = byId<HTMLButtonElement>('settings');
 const openEditorButton = byId<HTMLButtonElement>('open-editor');
+const skillsButton = byId<HTMLButtonElement>('skills');
 const sessionBar = byId<HTMLElement>('session-bar');
 const statusLine = byId<HTMLElement>('status');
+const skillBar = byId<HTMLElement>('skill-bar');
+const mentionMenu = byId<HTMLElement>('mention-menu');
 const contextBar = byId<HTMLElement>('context-bar');
 const fileToggle = byId<HTMLButtonElement>('toggle-file');
 const selectionToggle = byId<HTMLButtonElement>('toggle-selection');
@@ -55,8 +58,61 @@ const settingTaskProfile = byId<HTMLSelectElement>('setting-task-profile');
 const settingProvider = byId<HTMLInputElement>('setting-provider');
 const settingModel = byId<HTMLInputElement>('setting-model');
 const settingBaseUrl = byId<HTMLInputElement>('setting-base-url');
+const settingApiKey = byId<HTMLInputElement>('setting-api-key');
+const clearApiKeyButton = byId<HTMLButtonElement>('clear-api-key');
+const settingReasoningEffort = byId<HTMLSelectElement>(
+  'setting-reasoning-effort'
+);
 const settingApproval = byId<HTMLSelectElement>('setting-approval');
+const settingSkillServerUrl = byId<HTMLInputElement>('setting-skill-server-url');
+const settingSkillServerToken = byId<HTMLInputElement>(
+  'setting-skill-server-token'
+);
+const clearSkillServerTokenButton = byId<HTMLButtonElement>(
+  'clear-skill-server-token'
+);
+const settingSkillsAutoSync = byId<HTMLInputElement>('setting-skills-auto-sync');
+const settingSkillsRequiredMissing = byId<HTMLSelectElement>(
+  'setting-skills-required-missing'
+);
+const settingSkillsLocalDir = byId<HTMLInputElement>('setting-skills-local-dir');
+const settingCodexCommand = byId<HTMLInputElement>('setting-codex-command');
+const settingExtraInstructions = byId<HTMLTextAreaElement>(
+  'setting-extra-instructions'
+);
+const settingsSkillGroups = byId<HTMLElement>('settings-skill-groups');
+const skillGroupSummary = byId<HTMLElement>('skill-group-summary');
+const joinSkillGroupsButton = byId<HTMLButtonElement>('join-skill-groups');
 const settingsError = byId<HTMLElement>('settings-error');
+const settingsTabs = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')
+);
+const settingsPages = Array.from(
+  document.querySelectorAll<HTMLElement>('[data-settings-page]')
+);
+let clearApiKey = false;
+let clearSkillServerToken = false;
+
+interface SkillGroupInfo {
+  id: string;
+  name: string;
+  description: string;
+  skillIds: string[];
+  membership: 'none' | 'pending' | 'approved' | 'rejected';
+}
+
+let skillGroups: SkillGroupInfo[] = [];
+let skillCategory = 'all';
+
+const skillsPanel = byId<HTMLElement>('skills-panel');
+const skillsScrim = byId<HTMLElement>('skills-scrim');
+const skillsClose = byId<HTMLButtonElement>('skills-close');
+const skillsList = byId<HTMLElement>('skills-list');
+const skillsNav = byId<HTMLElement>('skills-nav');
+const skillsCreate = byId<HTMLButtonElement>('skills-create');
+const skillsFolder = byId<HTMLButtonElement>('skills-folder');
+const skillsUpload = byId<HTMLButtonElement>('skills-upload');
+const skillsSync = byId<HTMLButtonElement>('skills-sync');
 
 const timelineEl = byId<HTMLElement>('timeline');
 const timelineSummary = byId<HTMLElement>('timeline-summary');
@@ -78,6 +134,19 @@ interface QuestionEntry {
 
 let activeSessionId: string | null = null;
 let sessionSummaries: Array<{ id: string; title: string; busy: boolean }> = [];
+let skillCatalog: Array<{
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  source: string;
+  required: boolean;
+  active: boolean;
+  groups?: string[];
+}> = [];
+let mentionItems: Array<{ id: string; name: string; version: string; source: string }> =
+  [];
+let mentionIndex = 0;
 let holdTimer: ReturnType<typeof setTimeout> | null = null;
 let holdButton: HTMLButtonElement | null = null;
 
@@ -89,6 +158,7 @@ let navFrame: number | null = null;
 const MAX_RESULT_CHARS = 4_000;
 const MAX_ARGS_CHARS = 4_000;
 const MAX_DIFF_CHARS = 6_000;
+const MAX_REASONING_CHARS = 20_000;
 
 let busy = false;
 let currentContextFile: string | undefined;
@@ -108,8 +178,17 @@ let timelineCollapsed = (() => {
   }
 })();
 let currentAssistant: HTMLElement | null = null;
+let currentProcess: HTMLElement | null = null;
+let currentProcessSteps: HTMLElement | null = null;
 let currentBody: HTMLElement | null = null;
 let currentText = '';
+let currentReasoning: HTMLElement | null = null;
+let currentReasoningBody: HTMLElement | null = null;
+let currentReasoningHeader: HTMLButtonElement | null = null;
+let currentReasoningText = '';
+let currentReasoningKind: 'summary' | 'raw' | null = null;
+let currentReasoningStarted = 0;
+let reasoningRenderTimer: ReturnType<typeof setTimeout> | null = null;
 let renderTimer: ReturnType<typeof setTimeout> | null = null;
 let thinking: HTMLElement | null = null;
 let thinkingLabel: HTMLElement | null = null;
@@ -157,6 +236,7 @@ function truncate(text: string, max: number): string {
 }
 
 function toolTitle(name: string): string {
+  if (isCommandTool(name)) return 'PowerShell';
   return name === 'fileChange' ? '修改文件' : name;
 }
 
@@ -491,15 +571,31 @@ function scrollToBottom(): void {
   transcript.scrollTop = transcript.scrollHeight;
 }
 
+function showProcess(): void {
+  if (currentProcess !== null) currentProcess.hidden = false;
+}
+
+function refreshProcessVisibility(): void {
+  if (currentProcess === null || currentProcessSteps === null) return;
+  currentProcess.hidden = currentProcessSteps.childElementCount === 0;
+}
+
 function appendElement(element: HTMLElement): void {
-  (currentAssistant ?? transcript).appendChild(element);
+  if (currentProcessSteps !== null) {
+    showProcess();
+    currentProcessSteps.appendChild(element);
+  } else {
+    transcript.appendChild(element);
+  }
   keepThinkingAtBottom();
+  refreshProcessVisibility();
   if (isNearBottom()) scrollToBottom();
 }
 
 function keepThinkingAtBottom(): void {
-  if (thinking !== null && currentAssistant !== null) {
-    currentAssistant.appendChild(thinking);
+  if (thinking !== null && currentProcessSteps !== null) {
+    showProcess();
+    currentProcessSteps.appendChild(thinking);
   }
 }
 
@@ -536,7 +632,13 @@ function showThinking(label = '思考中…'): void {
   if (thinkingTimer === null) {
     thinkingTimer = setInterval(renderThinkingLabel, 1_000);
   }
-  currentAssistant?.appendChild(thinking);
+  if (currentProcessSteps !== null) {
+    showProcess();
+    currentProcessSteps.appendChild(thinking);
+  } else {
+    currentAssistant?.appendChild(thinking);
+  }
+  refreshProcessVisibility();
   if (isNearBottom()) scrollToBottom();
 }
 
@@ -548,6 +650,166 @@ function removeThinking(): void {
   thinking?.remove();
   thinking = null;
   thinkingLabel = null;
+  refreshProcessVisibility();
+}
+
+function formatThinkingDuration(ms: number): string {
+  const seconds = Math.max(0, ms) / 1_000;
+  return seconds < 1 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`;
+}
+
+function resetReasoningState(): void {
+  if (reasoningRenderTimer !== null) {
+    clearTimeout(reasoningRenderTimer);
+    reasoningRenderTimer = null;
+  }
+  currentReasoning = null;
+  currentReasoningBody = null;
+  currentReasoningHeader = null;
+  currentReasoningText = '';
+  currentReasoningKind = null;
+  currentReasoningStarted = 0;
+}
+
+function flushGenerationToProcess(): void {
+  if (currentText.trim() === '' || currentProcessSteps === null) return;
+  const content = currentText;
+  currentText = '';
+  if (renderTimer !== null) {
+    clearTimeout(renderTimer);
+    renderTimer = null;
+  }
+  if (currentBody !== null) currentBody.innerHTML = '';
+
+  const step = document.createElement('div');
+  step.className = 'process-step generation-step collapsed';
+  const header = document.createElement('button');
+  header.type = 'button';
+  header.className = 'generation-header';
+  header.textContent = '生成';
+  header.setAttribute('aria-expanded', 'false');
+  const body = document.createElement('div');
+  body.className = 'generation-body markdown';
+  body.innerHTML = renderMarkdown(content);
+  enhanceCodeBlocks(body);
+  body.hidden = true;
+  header.addEventListener('click', () => {
+    const collapsed = step.classList.toggle('collapsed');
+    body.hidden = collapsed;
+    header.setAttribute('aria-expanded', String(!collapsed));
+  });
+  step.append(header, body);
+  showProcess();
+  currentProcessSteps.appendChild(step);
+  refreshProcessVisibility();
+}
+
+function ensureReasoningBlock(): void {
+  if (currentReasoning !== null) return;
+  flushGenerationToProcess();
+  ensureAssistant();
+  const block = document.createElement('div');
+  block.className = 'reasoning-block';
+  const header = document.createElement('button');
+  header.type = 'button';
+  header.className = 'reasoning-header';
+  header.textContent = '思考中';
+  header.setAttribute('aria-expanded', 'true');
+  const body = document.createElement('div');
+  body.className = 'reasoning-body';
+  block.append(header, body);
+  if (currentProcessSteps !== null) {
+    showProcess();
+    currentProcessSteps.appendChild(block);
+  } else {
+    currentAssistant?.appendChild(block);
+  }
+  refreshProcessVisibility();
+  header.addEventListener('click', () => {
+    const collapsed = block.classList.toggle('collapsed');
+    body.hidden = collapsed;
+    header.setAttribute('aria-expanded', String(!collapsed));
+  });
+  currentReasoning = block;
+  currentReasoningBody = body;
+  currentReasoningHeader = header;
+  currentReasoningText = '';
+  currentReasoningKind = null;
+  currentReasoningStarted = Date.now();
+}
+
+function reasoningDisplayText(text: string): string {
+  if (text.length <= MAX_REASONING_CHARS) return text;
+  return `${text.slice(0, MAX_REASONING_CHARS)}\n…（思考内容已截断，共 ${text.length} 字符）`;
+}
+
+function renderReasoning(): void {
+  if (currentReasoningBody === null || currentReasoningHeader === null) return;
+  currentReasoningBody.textContent = reasoningDisplayText(currentReasoningText);
+  const elapsed = formatThinkingDuration(Date.now() - currentReasoningStarted);
+  currentReasoningHeader.textContent = `思考中 ${elapsed}`;
+  if (isNearBottom()) scrollToBottom();
+}
+
+function scheduleReasoningRender(): void {
+  if (reasoningRenderTimer !== null) return;
+  reasoningRenderTimer = setTimeout(() => {
+    reasoningRenderTimer = null;
+    renderReasoning();
+  }, 80);
+}
+
+function appendReasoning(
+  text: string,
+  kind?: 'summary' | 'raw'
+): void {
+  if (text === '') return;
+  ensureReasoningBlock();
+  if (currentReasoningKind === null && kind !== undefined) {
+    currentReasoningKind = kind;
+  }
+  removeThinking();
+  currentReasoningText += text;
+  scheduleReasoningRender();
+}
+
+function finishReasoning(
+  text: string,
+  kind?: 'summary' | 'raw'
+): void {
+  const normalized = normalizeOutput(text !== '' ? text : currentReasoningText);
+  if (normalized.trim() === '') {
+    currentReasoning?.remove();
+    resetReasoningState();
+    return;
+  }
+  ensureReasoningBlock();
+  if (currentReasoningKind === null && kind !== undefined) {
+    currentReasoningKind = kind;
+  }
+  if (reasoningRenderTimer !== null) {
+    clearTimeout(reasoningRenderTimer);
+    reasoningRenderTimer = null;
+  }
+  currentReasoningText = normalized;
+  if (currentReasoningBody !== null) {
+    currentReasoningBody.textContent = reasoningDisplayText(normalized);
+    currentReasoningBody.hidden = true;
+  }
+  if (currentReasoning !== null) {
+    currentReasoning.classList.add('collapsed');
+  }
+  if (currentReasoningHeader !== null) {
+    const elapsed = formatThinkingDuration(Date.now() - currentReasoningStarted);
+    currentReasoningHeader.textContent = `已思考 ${elapsed}`;
+    currentReasoningHeader.setAttribute('aria-expanded', 'false');
+  }
+  currentReasoning = null;
+  currentReasoningBody = null;
+  currentReasoningHeader = null;
+  currentReasoningText = '';
+  currentReasoningKind = null;
+  currentReasoningStarted = 0;
 }
 
 function ensureAssistant(): HTMLElement {
@@ -563,9 +825,17 @@ function ensureAssistant(): HTMLElement {
     const name = document.createElement('span');
     name.textContent = 'AgentBox';
     meta.append(mark, name);
+
+    currentProcess = document.createElement('div');
+    currentProcess.className = 'process-container';
+    currentProcess.hidden = true;
+    currentProcessSteps = document.createElement('div');
+    currentProcessSteps.className = 'process-steps';
+    currentProcess.append(currentProcessSteps);
+
     currentBody = document.createElement('div');
     currentBody.className = 'message-body markdown';
-    currentAssistant.append(meta, currentBody);
+    currentAssistant.append(meta, currentProcess, currentBody);
     transcript.appendChild(currentAssistant);
     currentText = '';
   }
@@ -796,13 +1066,19 @@ function createToolCard(
 
   const header = document.createElement('div');
   header.className = 'tool-header';
+  header.setAttribute('role', 'button');
+  header.setAttribute('tabindex', '0');
+  header.setAttribute('aria-expanded', 'true');
   const title = document.createElement('span');
   title.className = 'tool-name';
-  title.textContent = `🔧 ${toolTitle(name)}`;
+  title.textContent = `工具 ${toolTitle(name)}`;
+  const summary = document.createElement('span');
+  summary.className = 'tool-summary';
+  summary.textContent = truncate(toolSpanSummary(name, args), 100);
   const status = document.createElement('span');
   status.className = 'tool-status running';
   status.textContent = '运行中';
-  header.append(title, status);
+  header.append(title, summary, status);
 
   const body = document.createElement('div');
   body.className = 'tool-body';
@@ -810,9 +1086,72 @@ function createToolCard(
 
   card.append(header, body);
   appendElement(card);
-  setThinkingLabel('执行工具…');
+  removeThinking();
+
+  const toggle = (): void => {
+    const collapsed = card.classList.toggle('collapsed');
+    body.hidden = collapsed;
+    header.setAttribute('aria-expanded', String(!collapsed));
+  };
+  header.addEventListener('click', toggle);
+  header.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      toggle();
+    }
+  });
 
   const entry = { card, status, body, name };
+  toolCards.set(callId, entry);
+  return entry;
+}
+
+function createCommandStep(
+  callId: string,
+  name: string,
+  args: unknown
+): {
+  card: HTMLElement;
+  status: HTMLElement;
+  body: HTMLElement;
+  name: string;
+} {
+  const card = document.createElement('div');
+  card.className = 'tool-card command-step';
+  const header = document.createElement('div');
+  header.className = 'tool-header';
+  header.setAttribute('role', 'button');
+  header.setAttribute('tabindex', '0');
+  header.title = '打开 AgentBox Chat 查看完整命令与输出';
+  const title = document.createElement('span');
+  title.className = 'tool-name';
+  title.textContent = `工具 ${toolTitle(name)}`;
+  const summary = document.createElement('span');
+  summary.className = 'tool-summary';
+  summary.textContent = truncate(toolSpanSummary(name, args), 100);
+  const status = document.createElement('span');
+  status.className = 'tool-status running';
+  status.textContent = '运行中';
+  header.append(title, summary, status);
+  card.append(header);
+  appendElement(card);
+  removeThinking();
+  const openDetails = (): void => {
+    post({ type: 'openToolDetails', callId });
+  };
+  header.addEventListener('click', openDetails);
+  header.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      openDetails();
+    }
+  });
+  const entry = {
+    card,
+    status,
+    body: document.createElement('div'),
+    name,
+  };
   toolCards.set(callId, entry);
   return entry;
 }
@@ -970,6 +1309,111 @@ function isPressed(button: HTMLButtonElement): boolean {
 
 function setPressed(button: HTMLButtonElement, pressed: boolean): void {
   button.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+}
+
+function currentMentionQuery(): { start: number; query: string } | undefined {
+  const position = input.selectionStart ?? input.value.length;
+  const before = input.value.slice(0, position);
+  const match = /(?:^|\s)@([a-z0-9._-]*)$/i.exec(before);
+  if (match === null) return undefined;
+  return {
+    start: before.length - (match[1]?.length ?? 0) - 1,
+    query: match[1] ?? '',
+  };
+}
+
+function hideMentionMenu(): void {
+  mentionMenu.hidden = true;
+  mentionMenu.replaceChildren();
+  mentionItems = [];
+  mentionIndex = 0;
+}
+
+function renderMentionMenu(): void {
+  mentionMenu.replaceChildren();
+  if (mentionItems.length === 0) {
+    hideMentionMenu();
+    return;
+  }
+  mentionMenu.hidden = false;
+  mentionItems.forEach((item, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `mention-item${index === mentionIndex ? ' selected' : ''}`;
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', index === mentionIndex ? 'true' : 'false');
+    const title = document.createElement('span');
+    title.className = 'mention-title';
+    title.textContent = `${item.name} · @${item.id}`;
+    const meta = document.createElement('span');
+    meta.className = 'mention-meta';
+    meta.textContent = `${item.source} · ${item.version}`;
+    button.append(title, meta);
+    button.addEventListener('mousedown', (event) => event.preventDefault());
+    button.addEventListener('click', () => chooseMention(item.id));
+    mentionMenu.appendChild(button);
+  });
+}
+
+function chooseMention(id: string): void {
+  const current = currentMentionQuery();
+  if (current === undefined) return;
+  const position = input.selectionStart ?? input.value.length;
+  const after = input.value.slice(position);
+  const before = input.value.slice(0, current.start);
+  const mention = `@${id} `;
+  input.value = `${before}${mention}${after}`;
+  const next = before.length + mention.length;
+  input.setSelectionRange(next, next);
+  hideMentionMenu();
+  autoResize();
+  input.focus();
+}
+
+function updateMentionMenu(): void {
+  const current = currentMentionQuery();
+  if (current === undefined) {
+    hideMentionMenu();
+    return;
+  }
+  const query = current.query.toLowerCase();
+  mentionItems = skillCatalog
+    .filter(
+      (item) =>
+        query === '' ||
+        item.id.toLowerCase().includes(query) ||
+        item.name.toLowerCase().includes(query)
+    )
+    .slice(0, 8)
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      version: item.version,
+      source: item.source,
+    }));
+  mentionIndex = Math.min(mentionIndex, Math.max(0, mentionItems.length - 1));
+  renderMentionMenu();
+}
+
+function updateSkills(skills: Array<{
+  id: string;
+  version: string;
+  source: string;
+  required: boolean;
+}>): void {
+  skillBar.replaceChildren();
+  if (skills.length === 0) {
+    skillBar.hidden = true;
+    return;
+  }
+  skillBar.hidden = false;
+  for (const skill of skills) {
+    const chip = document.createElement('span');
+    chip.className = `skill-chip${skill.required ? ' required' : ''}`;
+    chip.textContent = `${skill.required ? '🔒' : '◇'} ${skill.id}@${skill.version}`;
+    chip.title = `${skill.source}${skill.required ? ' · required' : ''}`;
+    skillBar.appendChild(chip);
+  }
 }
 
 function updateContext(next: ContextInfo): void {
@@ -1130,7 +1574,10 @@ function clearTranscript(): void {
   questionNav.hidden = true;
   questionTooltip.hidden = true;
   removeThinking();
+  resetReasoningState();
   currentAssistant = null;
+  currentProcess = null;
+  currentProcessSteps = null;
   currentBody = null;
   currentText = '';
   toolCards.clear();
@@ -1164,6 +1611,21 @@ function handleMessage(message: HostToWebview): void {
       renderSessionTabs();
       return;
 
+    case 'skills':
+      updateSkills(message.skills);
+      return;
+
+    case 'skills.catalog':
+      skillCatalog = message.items;
+      renderSkillsCatalog(message.items);
+      if (mentionMenu.hidden === false) updateMentionMenu();
+      return;
+
+    case 'skills.groups':
+      skillGroups = message.groups;
+      renderSkillGroups();
+      return;
+
     case 'context':
       updateContext(message.context);
       return;
@@ -1193,6 +1655,7 @@ function handleMessage(message: HostToWebview): void {
       return;
 
     case 'turn.start':
+      resetReasoningState();
       turnTokens = null;
       renderTokenUsage();
       timeline.begin(Date.now());
@@ -1203,7 +1666,18 @@ function handleMessage(message: HostToWebview): void {
       setBusy(true);
       return;
 
+    case 'reasoning.delta':
+      appendReasoning(message.text, message.kind);
+      return;
+
+    case 'reasoning.end':
+      finishReasoning(message.text, message.kind);
+      return;
+
     case 'assistant.delta':
+      if (currentReasoning !== null) {
+        finishReasoning(currentReasoningText, currentReasoningKind ?? undefined);
+      }
       if (timeline.textDelta(Date.now())) {
         renderTimeline();
       }
@@ -1214,6 +1688,7 @@ function handleMessage(message: HostToWebview): void {
       return;
 
     case 'tool.start':
+      flushGenerationToProcess();
       timeline.toolStart(
         Date.now(),
         message.callId,
@@ -1222,9 +1697,7 @@ function handleMessage(message: HostToWebview): void {
       );
       renderTimeline();
       if (isCommandTool(message.name)) {
-        // Commands live only in the timeline + AgentBox Chat log, not in the
-        // transcript, so they do not consume conversation space.
-        setThinkingLabel('执行工具…');
+        createCommandStep(message.callId, message.name, message.args);
       } else {
         createToolCard(message.callId, message.name, message.args);
       }
@@ -1234,25 +1707,36 @@ function handleMessage(message: HostToWebview): void {
       timeline.toolEnd(Date.now(), message.callId, message.ok);
       renderTimeline();
       setThinkingLabel(currentText === '' ? '思考中…' : '生成中…');
-      if (isCommandTool(message.name)) return;
       const entry =
         toolCards.get(message.callId) ??
-        createToolCard(message.callId, message.name, {});
+        (isCommandTool(message.name)
+          ? createCommandStep(message.callId, message.name, {})
+          : createToolCard(message.callId, message.name, {}));
       entry.status.textContent = message.ok ? '完成' : '失败';
       entry.status.className = `tool-status ${message.ok ? 'ok' : 'fail'}`;
-      const result = normalizeOutput(message.result);
-      if (result.trim() !== '') {
-        const pre = addPre(entry.body, '', 'tool-result');
-        setExpandable(pre, result, MAX_RESULT_CHARS);
+      if (!isCommandTool(message.name)) {
+        const result = normalizeOutput(message.result);
+        if (result.trim() !== '') {
+          const pre = addPre(entry.body, '', 'tool-result');
+          setExpandable(pre, result, MAX_RESULT_CHARS);
+        }
+        entry.card.classList.add('collapsed');
+        entry.body.hidden = true;
+        entry.card
+          .querySelector('.tool-header')
+          ?.setAttribute('aria-expanded', 'false');
       }
       return;
     }
 
     case 'file.changed':
-      addFileChip(
-        currentAssistant ?? transcript,
-        message.path
-      );
+      if (currentProcessSteps !== null) {
+        showProcess();
+        refreshProcessVisibility();
+        addFileChip(currentProcessSteps, message.path);
+      } else {
+        addFileChip(currentAssistant ?? transcript, message.path);
+      }
       return;
 
     case 'token.usage':
@@ -1262,6 +1746,7 @@ function handleMessage(message: HostToWebview): void {
       return;
 
     case 'approval.request':
+      flushGenerationToProcess();
       timeline.approvalWait(Date.now());
       renderTimeline();
       setThinkingLabel('等待审批…');
@@ -1283,6 +1768,9 @@ function handleMessage(message: HostToWebview): void {
       return;
 
     case 'turn.end':
+      if (currentReasoning !== null) {
+        finishReasoning(currentReasoningText, currentReasoningKind ?? undefined);
+      }
       timeline.finish(Date.now());
       stopTimelineClock();
       renderTimeline();
@@ -1292,6 +1780,8 @@ function handleMessage(message: HostToWebview): void {
         enhanceCodeBlocks(currentBody);
       }
       currentAssistant = null;
+      currentProcess = null;
+      currentProcessSteps = null;
       currentBody = null;
       currentText = '';
       for (const [id, entry] of approvalCards) {
@@ -1314,7 +1804,11 @@ function handleMessage(message: HostToWebview): void {
       activeSessionId = null;
       sessionSummaries = [];
       cancelHold();
+      if (!skillsPanel.hidden) closeSkillsPanel();
+      skillCatalog = [];
+      hideMentionMenu();
       renderSessionTabs();
+      updateSkills([]);
       resetActiveView();
       return;
   }
@@ -1338,11 +1832,79 @@ function clearSettingsError(): void {
   settingsError.hidden = true;
 }
 
+function selectSettingsTab(name: string): void {
+  for (const tab of settingsTabs) {
+    tab.classList.toggle('active', tab.dataset.settingsTab === name);
+  }
+  for (const page of settingsPages) {
+    page.hidden = page.dataset.settingsPage !== name;
+  }
+}
+
+function updateSkillGroupSummary(): void {
+  const approved = skillGroups.filter(
+    (group) => group.membership === 'approved'
+  ).length;
+  const selected = Array.from(
+    settingsSkillGroups.querySelectorAll<HTMLInputElement>(
+      'input[type=checkbox]'
+    )
+  ).filter((input) => input.checked && !input.disabled).length;
+  skillGroupSummary.textContent =
+    approved > 0
+      ? `已加入 ${approved} 个组${selected > 0 ? `（已选 ${selected}）` : ''}`
+      : selected > 0
+        ? `选择分组（已选 ${selected}）`
+        : '选择分组';
+}
+
+function renderSkillGroups(): void {
+  settingsSkillGroups.replaceChildren();
+  if (skillGroups.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'skills-empty';
+    empty.textContent = '未配置 Skill Server 或服务端暂无分组。';
+    settingsSkillGroups.appendChild(empty);
+    skillGroupSummary.textContent = '选择分组';
+    return;
+  }
+  for (const group of skillGroups) {
+    const row = document.createElement('label');
+    row.className = 'skill-group-row';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = group.id;
+    checkbox.checked = group.membership === 'approved';
+    checkbox.disabled =
+      group.membership === 'approved' || group.membership === 'pending';
+    checkbox.addEventListener('change', updateSkillGroupSummary);
+    const name = document.createElement('span');
+    name.textContent = group.name;
+    name.title = group.description;
+    const status = document.createElement('span');
+    status.className = 'membership';
+    status.textContent =
+      group.membership === 'approved'
+        ? '已加入'
+        : group.membership === 'pending'
+          ? '待审批'
+          : group.membership === 'rejected'
+            ? '已拒绝，可重新申请'
+            : '未加入';
+    row.append(checkbox, name, status);
+    settingsSkillGroups.appendChild(row);
+  }
+  updateSkillGroupSummary();
+}
+
 function openSettingsPanel(): void {
+  if (!skillsPanel.hidden) closeSkillsPanel();
   clearSettingsError();
+  selectSettingsTab('model');
   settingsPanel.hidden = false;
   settingsScrim.hidden = false;
   post({ type: 'settings.request' });
+  post({ type: 'skills.requestGroups' });
   settingRuntime.focus();
 }
 
@@ -1352,6 +1914,179 @@ function closeSettingsPanel(): void {
   input.focus();
 }
 
+function openSkillsPanel(): void {
+  if (!settingsPanel.hidden) closeSettingsPanel();
+  skillsPanel.hidden = false;
+  skillsScrim.hidden = false;
+  post({ type: 'skills.open' });
+  skillsClose.focus();
+}
+
+function closeSkillsPanel(): void {
+  skillsPanel.hidden = true;
+  skillsScrim.hidden = true;
+  input.focus();
+}
+
+type SkillCatalogEntry = {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  source: string;
+  required: boolean;
+  active: boolean;
+  groups?: string[];
+};
+
+function skillCategoryKey(item: SkillCatalogEntry): string {
+  if (item.source === 'local') return 'local';
+  const group =
+    item.groups !== undefined && item.groups.length > 0
+      ? item.groups[0]!
+      : '未分组';
+  return `remote:${group}`;
+}
+
+function skillNavIcon(key: string): string {
+  if (key === 'local') {
+    return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4.5h4l1.2 1.5h5.8v6h-11z"/></svg>';
+  }
+  if (key.startsWith('remote:')) {
+    return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 11.5h7a2.5 2.5 0 0 0 .4-4.97A3.5 3.5 0 0 0 5.2 6.6 2.5 2.5 0 0 0 4.5 11.5Z"/></svg>';
+  }
+  return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="2.5" width="4" height="4" rx=".6"/><rect x="9.5" y="2.5" width="4" height="4" rx=".6"/><rect x="2.5" y="9.5" width="4" height="4" rx=".6"/><rect x="9.5" y="9.5" width="4" height="4" rx=".6"/></svg>';
+}
+
+function renderSkillsNav(items: SkillCatalogEntry[]): void {
+  skillsNav.replaceChildren();
+  if (items.length === 0) return;
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const key = skillCategoryKey(item);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const entries: Array<{ key: string; label: string }> = [
+    { key: 'all', label: '全部' },
+  ];
+  if (counts.has('local')) entries.push({ key: 'local', label: '本地' });
+  const remoteGroups = [...counts.keys()]
+    .filter((key) => key.startsWith('remote:'))
+    .map((key) => key.slice('remote:'.length))
+    .sort((a, b) => {
+      if (a === '未分组') return 1;
+      if (b === '未分组') return -1;
+      return a.localeCompare(b);
+    });
+  for (const group of remoteGroups) {
+    entries.push({ key: `remote:${group}`, label: `服务器 · ${group}` });
+  }
+  if (!entries.some((entry) => entry.key === skillCategory)) {
+    skillCategory = 'all';
+  }
+  for (const entry of entries) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `skill-nav-item${entry.key === skillCategory ? ' active' : ''}`;
+    const icon = document.createElement('span');
+    icon.className = 'skill-nav-icon';
+    icon.innerHTML = skillNavIcon(entry.key);
+    const label = document.createElement('span');
+    label.textContent = entry.label;
+    button.append(icon, label);
+    button.title = entry.label;
+    button.addEventListener('click', () => {
+      skillCategory = entry.key;
+      renderSkillsCatalog(skillCatalog);
+    });
+    skillsNav.appendChild(button);
+  }
+}
+
+function renderSkillsCatalog(items: SkillCatalogEntry[]): void {
+  skillCatalog = items;
+  skillsList.replaceChildren();
+  renderSkillsNav(items);
+  if (items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'skills-empty';
+    empty.textContent =
+      '没有可用 Skill。先执行 AgentBox: Create Skill 或同步远程 Skill。';
+    skillsList.appendChild(empty);
+    return;
+  }
+
+  const visible =
+    skillCategory === 'all'
+      ? items
+      : items.filter((item) => skillCategoryKey(item) === skillCategory);
+  const local = visible.filter((item) => item.source === 'local');
+  const remote = visible.filter((item) => item.source !== 'local');
+  const remoteGroups = new Map<string, SkillCatalogEntry[]>();
+  for (const item of remote) {
+    const group =
+      item.groups !== undefined && item.groups.length > 0
+        ? item.groups[0]!
+        : '未分组';
+    const list = remoteGroups.get(group) ?? [];
+    list.push(item);
+    remoteGroups.set(group, list);
+  }
+
+  const sections: Array<{ title: string; items: SkillCatalogEntry[] }> = [];
+  if (local.length > 0) sections.push({ title: '本地', items: local });
+  for (const [group, groupItems] of [...remoteGroups.entries()].sort((a, b) =>
+    a[0].localeCompare(b[0])
+  )) {
+    sections.push({ title: `服务器 · ${group}`, items: groupItems });
+  }
+
+  const appendRow = (parent: HTMLElement, item: SkillCatalogEntry): void => {
+    const label = document.createElement('label');
+    label.className = `skill-row${item.required ? ' required' : ''}`;
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = item.required || item.active;
+    checkbox.disabled = item.required;
+    checkbox.addEventListener('change', () => {
+      post({
+        type: 'skills.toggle',
+        id: item.id,
+        enabled: checkbox.checked,
+      });
+    });
+
+    const text = document.createElement('span');
+    text.className = 'skill-row-text';
+    const title = document.createElement('span');
+    title.className = 'skill-row-title';
+    title.textContent = `${item.name} · ${item.id}@${item.version}`;
+    const meta = document.createElement('span');
+    meta.className = 'skill-row-meta';
+    meta.textContent = [
+      item.source,
+      item.required ? 'required' : '',
+      item.groups && item.groups.length > 0 ? item.groups.join(', ') : '',
+      item.description,
+    ]
+      .filter((part) => part !== '')
+      .join(' · ');
+
+    text.append(title, meta);
+    label.append(checkbox, text);
+    parent.appendChild(label);
+  };
+
+  for (const section of sections) {
+    const heading = document.createElement('div');
+    heading.className = 'skill-group-title';
+    heading.textContent = section.title;
+    skillsList.appendChild(heading);
+    for (const item of section.items) appendRow(skillsList, item);
+  }
+}
+
 function applySettings(values: SettingsValues): void {
   settingRuntime.value = values.runtime;
   settingTaskProfile.value = values.taskProfile;
@@ -1359,9 +2094,28 @@ function applySettings(values: SettingsValues): void {
   settingModel.value = values.model;
   settingBaseUrl.value = values.baseUrl;
   settingApproval.value = values.approvalPolicy;
+  settingReasoningEffort.value = values.reasoningEffort;
+  settingApiKey.value = '';
+  settingApiKey.placeholder = values.apiKeyConfigured
+    ? '已保存（留空不修改）'
+    : '未设置';
+  settingSkillServerUrl.value = values.skillServerUrl;
+  settingSkillServerToken.value = '';
+  settingSkillServerToken.placeholder = values.skillServerTokenConfigured
+    ? '已保存（留空不修改）'
+    : '未设置';
+  settingSkillsAutoSync.checked = values.skillsAutoSync;
+  settingSkillsRequiredMissing.value = values.skillsRequiredMissing;
+  settingSkillsLocalDir.value = values.skillsLocalDir;
+  settingCodexCommand.value = values.codexCommand;
+  settingExtraInstructions.value = values.extraInstructions;
+  clearApiKey = false;
+  clearSkillServerToken = false;
 }
 
 function saveSettings(): void {
+  const apiKey = settingApiKey.value.trim();
+  const skillToken = settingSkillServerToken.value.trim();
   const values: SettingsValues = {
     runtime: settingRuntime.value,
     taskProfile: settingTaskProfile.value,
@@ -1369,6 +2123,19 @@ function saveSettings(): void {
     model: settingModel.value.trim(),
     baseUrl: settingBaseUrl.value.trim(),
     approvalPolicy: settingApproval.value,
+    reasoningEffort: settingReasoningEffort.value,
+    apiKeyConfigured: false,
+    codexCommand: settingCodexCommand.value.trim(),
+    extraInstructions: settingExtraInstructions.value,
+    skillServerUrl: settingSkillServerUrl.value.trim(),
+    skillServerTokenConfigured: false,
+    skillsAutoSync: settingSkillsAutoSync.checked,
+    skillsRequiredMissing: settingSkillsRequiredMissing.value,
+    skillsLocalDir: settingSkillsLocalDir.value.trim(),
+    ...(apiKey === '' ? {} : { apiKey }),
+    ...(skillToken === '' ? {} : { skillServerToken: skillToken }),
+    ...(clearApiKey ? { clearApiKey: true } : {}),
+    ...(clearSkillServerToken ? { clearSkillServerToken: true } : {}),
   };
   clearSettingsError();
   post({ type: 'settings.save', values });
@@ -1379,6 +2146,7 @@ function sendPrompt(): void {
   const text = input.value.trim();
   if (text === '') return;
 
+  hideMentionMenu();
   input.value = '';
   autoResize();
   setBusy(true);
@@ -1404,11 +2172,46 @@ newButton.addEventListener('click', () => {
 openEditorButton.addEventListener('click', () => {
   post({ type: 'openEditor' });
 });
+clearApiKeyButton.addEventListener('click', () => {
+  clearApiKey = true;
+  settingApiKey.value = '';
+  settingApiKey.placeholder = '保存后清除';
+});
+clearSkillServerTokenButton.addEventListener('click', () => {
+  clearSkillServerToken = true;
+  settingSkillServerToken.value = '';
+  settingSkillServerToken.placeholder = '保存后清除';
+});
+for (const tab of settingsTabs) {
+  tab.addEventListener('click', () => {
+    selectSettingsTab(tab.dataset.settingsTab ?? 'model');
+  });
+}
+joinSkillGroupsButton.addEventListener('click', () => {
+  const ids = Array.from(
+    settingsSkillGroups.querySelectorAll<HTMLInputElement>('input[type=checkbox]')
+  )
+    .filter((input) => !input.disabled && input.checked)
+    .map((input) => input.value);
+  if (ids.length === 0) {
+    settingsError.textContent = '请选择要加入的分组。';
+    settingsError.hidden = false;
+    return;
+  }
+  post({ type: 'skills.joinGroups', ids });
+});
 settingsButton.addEventListener('click', openSettingsPanel);
 settingsClose.addEventListener('click', closeSettingsPanel);
 settingsCancel.addEventListener('click', closeSettingsPanel);
 settingsSave.addEventListener('click', saveSettings);
 settingsScrim.addEventListener('click', closeSettingsPanel);
+skillsButton.addEventListener('click', openSkillsPanel);
+skillsClose.addEventListener('click', closeSkillsPanel);
+skillsScrim.addEventListener('click', closeSkillsPanel);
+skillsCreate.addEventListener('click', () => post({ type: 'skills.create' }));
+skillsFolder.addEventListener('click', () => post({ type: 'skills.openFolder' }));
+skillsUpload.addEventListener('click', () => post({ type: 'skills.upload' }));
+skillsSync.addEventListener('click', () => post({ type: 'skills.sync' }));
 timelineEl.addEventListener('mouseleave', hideTimelineTooltip);
 timelineToggle.addEventListener('click', toggleTimeline);
 transcript.addEventListener('scroll', scheduleQuestionNav);
@@ -1421,8 +2224,40 @@ selectionToggle.addEventListener('click', () => {
   setPressed(selectionToggle, !isPressed(selectionToggle));
 });
 
-input.addEventListener('input', autoResize);
+input.addEventListener('input', () => {
+  autoResize();
+  updateMentionMenu();
+});
+input.addEventListener('blur', () => {
+  setTimeout(hideMentionMenu, 120);
+});
 input.addEventListener('keydown', (event) => {
+  if (!mentionMenu.hidden && mentionItems.length > 0) {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      mentionIndex = (mentionIndex + 1) % mentionItems.length;
+      renderMentionMenu();
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      mentionIndex =
+        (mentionIndex - 1 + mentionItems.length) % mentionItems.length;
+      renderMentionMenu();
+      return;
+    }
+    if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault();
+      const item = mentionItems[mentionIndex];
+      if (item !== undefined) chooseMention(item.id);
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      hideMentionMenu();
+      return;
+    }
+  }
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     sendPrompt();
@@ -1432,6 +2267,8 @@ input.addEventListener('keydown', (event) => {
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !settingsPanel.hidden) {
     closeSettingsPanel();
+  } else if (event.key === 'Escape' && !skillsPanel.hidden) {
+    closeSkillsPanel();
   }
 });
 

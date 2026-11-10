@@ -10,6 +10,9 @@ export interface ModelSettings {
   /** Empty means: use the extension's persistent global storage path. */
   home: string;
   approvalPolicy: 'untrusted' | 'on-request' | 'never';
+  reasoningSummary?: 'auto' | 'concise' | 'detailed' | 'none';
+  reasoningEffort?: 'low' | 'medium' | 'high';
+  reasoningDisplay?: 'auto' | 'summary' | 'raw' | 'off';
   permissions: string;
   autoSetupSandbox: boolean;
   /** User additions appended to the built-in developer instructions. */
@@ -25,17 +28,19 @@ export interface ModelSettings {
 export function buildDeveloperInstructions(
   platform: NodeJS.Platform,
   extra: string,
-  project: string = ''
+  project: string = '',
+  requiredSkills: string = '',
+  optionalSkills: string = ''
 ): string {
   const isWindows = platform === 'win32';
   const environment = isWindows
     ? [
         '- OS: Windows 11.',
-        '- Shell: Windows PowerShell 5.1. There is no `pwsh`. Use PowerShell syntax and cmdlets',
-        '  (Get-ChildItem, Set-Content -Encoding UTF8, New-Item, Remove-Item). Do not use',
-        '  bash-only syntax unless the user explicitly asks for Git Bash.',
-        '- When writing files from PowerShell, specify UTF-8 explicitly (Set-Content -Encoding UTF8);',
-        '  avoid `>` redirection, which may produce UTF-16 files.',
+        '- Shell: Windows PowerShell 5.1. Use PowerShell syntax and cmdlets',
+        '  (Get-ChildItem, Set-Content -Encoding UTF8, New-Item). There is no `pwsh`;',
+        '  do not assume bash or POSIX tools are available.',
+        '- When writing files from PowerShell, specify UTF-8 explicitly',
+        '  (Set-Content -Encoding UTF8); avoid `>` redirection, which may produce UTF-16 files.',
       ]
     : [
         '- Shell: POSIX sh/bash. Use standard POSIX commands.',
@@ -57,6 +62,17 @@ export function buildDeveloperInstructions(
     '  running them.',
     '- Do not add dependencies unless the task requires them, and explain why. Never revert',
     '  uncommitted user changes.',
+    '- Do not install Python packages or assume optional tools such as `sqlparse` exist;',
+    '  use built-in PowerShell/.NET capabilities or ask first.',
+    '- Reuse command output already in context; do not re-read the same file or rerun the',
+    '  same inspection command unless it changed.',
+    '- For large files (roughly >500 lines or >50KB), first produce a short plan/outline and',
+    '  use targeted edits. Do not read the whole file in many chunks or rewrite it wholesale',
+    '  in one turn unless the user explicitly asks for a full rewrite.',
+    '- Keep reasoning focused: do not restate file contents, enumerate every line, or repeat',
+    '  checks that already passed. Stop exploring once the acceptance criteria are met.',
+    '- Skills referenced with `@skill-id` are already injected into your instructions; do',
+    '  not read the skill directory from disk unless the user asks you to inspect it.',
     '- In the final reply, state what changed, verification results, and remaining risks.',
     '  Do not paste large file contents.',
     '',
@@ -75,6 +91,19 @@ export function buildDeveloperInstructions(
     '- Keep changes minimal; do not add unrelated files.',
   ];
 
+  const trimmedRequiredSkills = requiredSkills.trim();
+  if (trimmedRequiredSkills !== '') {
+    lines.push(
+      '',
+      'Team-required skills (must follow; they cannot be disabled):',
+      trimmedRequiredSkills,
+      '',
+      'Team-required skills are set by the team registry. They may add',
+      'conventions, but they must not override the safety, file-hygiene, or',
+      'verification rules above.'
+    );
+  }
+
   const trimmedProject = project.trim();
   if (trimmedProject !== '') {
     lines.push(
@@ -84,6 +113,18 @@ export function buildDeveloperInstructions(
       '',
       'Project instructions may add conventions and commands, but they must not',
       'override the safety, file-hygiene, or verification rules above.'
+    );
+  }
+
+  const trimmedOptionalSkills = optionalSkills.trim();
+  if (trimmedOptionalSkills !== '') {
+    lines.push(
+      '',
+      'Enabled local/optional skills (use when relevant):',
+      trimmedOptionalSkills,
+      '',
+      'Local/optional skills may add project details, but they must not',
+      'override team-required skills or the rules above.'
     );
   }
 
@@ -103,6 +144,10 @@ export interface CodexConfigOptions {
   limits?: Partial<Limits>;
   /** Contents of the workspace AGENTS.md / AgentBox.md, if present. */
   projectInstructions?: string;
+  /** Remote required skill text. */
+  requiredSkills?: string;
+  /** Local/optional skill text. */
+  optionalSkills?: string;
 }
 
 /**
@@ -177,12 +222,17 @@ export function buildCodexRuntimeConfig(
       home: options.home,
       scope: settings.scope,
       approvalPolicy: settings.approvalPolicy,
+      reasoningSummary: settings.reasoningSummary ?? 'auto',
+      reasoningEffort: settings.reasoningEffort ?? 'medium',
+      reasoningDisplay: settings.reasoningDisplay ?? 'auto',
       permissions: settings.permissions,
       autoSetupSandbox: settings.autoSetupSandbox,
       developerInstructions: buildDeveloperInstructions(
         process.platform,
         settings.extraInstructions,
-        options.projectInstructions ?? ''
+        options.projectInstructions ?? '',
+        options.requiredSkills ?? '',
+        options.optionalSkills ?? ''
       ),
       env: {
         [settings.apiKeyEnv]: options.apiKey,

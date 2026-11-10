@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "team-encoding",
+  "name": "Team Encoding",
+  "version": "1.0.0",
+  "description": "TypeScript/Python naming, error handling, and file organization rules.",
+  "owner": "platform",
+  "activation": "always",
+  "appliesTo": { "languages": ["typescript", "python", "sql"] },
+  "triggers": { "keywords": ["naming", "encoding", "error handling"] },
+  "priority": 100,
+  "budget": { "maxChars": 2200 },
+  "required": false
+}

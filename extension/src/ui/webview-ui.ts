@@ -66,6 +66,14 @@ export class WebviewTurnUi implements TurnUi {
     this.send({ type: 'turn.start', turnId });
   }
 
+  reasoningDelta(text: string, kind?: 'summary' | 'raw'): void {
+    this.send({ type: 'reasoning.delta', text, ...(kind ? { kind } : {}) });
+  }
+
+  reasoningEnded(text: string, kind?: 'summary' | 'raw'): void {
+    this.send({ type: 'reasoning.end', text, ...(kind ? { kind } : {}) });
+  }
+
   toolStarted(callId: string, name: string, args: unknown): void {
     this.send({ type: 'tool.start', callId, name, args });
   }

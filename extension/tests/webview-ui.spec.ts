@@ -67,6 +67,24 @@ describe('WebviewTurnUi', () => {
     });
   });
 
+  it('forwards reasoning summary deltas and completion', () => {
+    const { messages, ui } = collect();
+
+    ui.reasoningDelta('checking ', 'summary');
+    ui.reasoningEnded('checking files', 'summary');
+
+    expect(messages).toContainEqual({
+      type: 'reasoning.delta',
+      text: 'checking ',
+      kind: 'summary',
+    });
+    expect(messages).toContainEqual({
+      type: 'reasoning.end',
+      text: 'checking files',
+      kind: 'summary',
+    });
+  });
+
   it('forwards token usage as turn/session totals', () => {
     const { messages, ui } = collect();
 

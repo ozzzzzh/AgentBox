@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "general-style",
+  "name": "General Style",
+  "version": "1.0.0",
+  "description": "Baseline style guidance available without joining a group.",
+  "owner": "platform",
+  "activation": "on-demand",
+  "priority": 30,
+  "budget": { "maxChars": 1200 },
+  "required": false
+}

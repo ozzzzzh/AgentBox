@@ -14,6 +14,12 @@
     "Other"
   ],
   "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:agentbox.chat",
+    "onCommand:agentbox.openInEditor",
+    "onCommand:agentbox.openChat"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -41,6 +47,21 @@
           "command": "agentbox.openInEditor",
           "when": "view == agentbox.chat",
           "group": "navigation@1"
+        },
+        {
+          "command": "agentbox.skills",
+          "when": "view == agentbox.chat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "agentbox.createSkill",
+          "when": "view == agentbox.chat",
+          "group": "navigation@3"
+        },
+        {
+          "command": "agentbox.syncSkills",
+          "when": "view == agentbox.chat",
+          "group": "navigation@4"
         }
       ]
     },
@@ -59,6 +80,51 @@
       {
         "command": "agentbox.focusSidebar",
         "title": "AgentBox: Focus Sidebar",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.skills",
+        "title": "AgentBox: Skills",
+        "category": "AgentBox",
+        "icon": "$(symbol-event)"
+      },
+      {
+        "command": "agentbox.createSkill",
+        "title": "AgentBox: Create Skill",
+        "category": "AgentBox",
+        "icon": "$(add)"
+      },
+      {
+        "command": "agentbox.openSkillsFolder",
+        "title": "AgentBox: Open Skills Folder",
+        "category": "AgentBox",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "agentbox.validateSkill",
+        "title": "AgentBox: Validate Skill",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.uploadSkill",
+        "title": "AgentBox: Upload Skill",
+        "category": "AgentBox",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "agentbox.syncSkills",
+        "title": "AgentBox: Sync Remote Skills",
+        "category": "AgentBox",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "agentbox.setSkillServerToken",
+        "title": "AgentBox: Set Skill Server Token",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.skillSettings",
+        "title": "AgentBox: Skill Settings",
         "category": "AgentBox"
       },
       {
@@ -185,6 +251,38 @@
           "default": "on-request",
           "description": "Codex thread approval policy."
         },
+        "agentbox.codex.reasoningSummary": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "concise",
+            "detailed",
+            "none"
+          ],
+          "default": "auto",
+          "description": "Request Codex reasoning summaries. AgentBox only displays summaries, never raw reasoning."
+        },
+        "agentbox.codex.reasoningEffort": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "medium",
+          "description": "Reasoning effort passed to Codex. Lower effort reduces thinking time and tokens."
+        },
+        "agentbox.codex.reasoningDisplay": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "summary",
+            "raw",
+            "off"
+          ],
+          "default": "auto",
+          "description": "Show reasoning summaries when available, otherwise raw reasoning text. Raw reasoning is displayed in the UI only and is not written to the log."
+        },
         "agentbox.codex.permissions": {
           "type": "string",
           "default": ":workspace",
@@ -217,6 +315,46 @@
           ],
           "markdownDescription": "Glob patterns for paths the file policy denies when Codex requests approval. Paths visible in the approval payload are checked; commands containing browser/profile junk markers are denied, and browser-preview commands require confirmation."
         },
+        "agentbox.skills.enabled": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Enabled local/optional skill ids. Remote required skills are always injected and cannot be disabled."
+        },
+        "agentbox.skills.disabled": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Local/optional skill ids to suppress. Remote required skills cannot be disabled."
+        },
+        "agentbox.skills.localDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Fixed local skill directory. Empty = `~/.agentbox/skills/local`. This directory must not be inside the workspace."
+        },
+        "agentbox.skills.serverUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "HTTP Skill Registry base URL, e.g. `https://skills.example.internal`. Empty = no remote skills."
+        },
+        "agentbox.skills.autoSync": {
+          "type": "boolean",
+          "default": true,
+          "description": "Sync approved/required remote skills when the extension activates."
+        },
+        "agentbox.skills.requiredMissing": {
+          "type": "string",
+          "enum": [
+            "warn",
+            "block"
+          ],
+          "default": "warn",
+          "markdownDescription": "Behavior when the remote skill cache has not been synced: warn and continue, or block turn startup."
+        },
         "agentbox.envFile": {
           "type": "string",
           "default": "",
@@ -226,11 +364,6 @@
           "type": "number",
           "minimum": 1,
           "description": "Optional per-turn timeout override. Leave empty to use the selected task profile."
-        },
-        "agentbox.limits.maxSteps": {
-          "type": "number",
-          "minimum": 1,
-          "description": "Optional max steps override. Leave empty to use the selected task profile."
         }
       }
     }

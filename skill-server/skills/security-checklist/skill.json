@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "security-checklist",
+  "name": "Security Checklist",
+  "version": "1.0.0",
+  "description": "Pre-merge checklist for secrets, permissions, logging, and network boundaries.",
+  "owner": "security",
+  "activation": "always",
+  "triggers": { "keywords": ["security", "secret", "permission", "auth"] },
+  "priority": 120,
+  "budget": { "maxChars": 2200 },
+  "required": false
+}

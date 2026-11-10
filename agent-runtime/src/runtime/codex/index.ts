@@ -19,6 +19,8 @@ import { prepareCodexHome, type PreparedCodexHome } from './config.js';
 import { JsonRpcClient } from './jsonrpc.js';
 import {
   getAgentMessageDelta,
+  getReasoningSummaryDelta,
+  getReasoningTextDelta,
   getTokenUsage,
   getTurnError,
   getTurnId,
@@ -36,6 +38,9 @@ interface ActiveTurn {
   abortRequested: boolean;
   abortTimer: ReturnType<typeof setTimeout> | null;
   usage: TokenUsageSnapshot | null;
+  reasoningText: string;
+  reasoningKind: 'summary' | 'raw' | null;
+  reasoningEnded: boolean;
 }
 
 interface QueuedNotification {
@@ -92,7 +97,15 @@ export class CodexRuntime implements AgentRuntime {
     this.config = config;
     this.guard = new TurnGuard(this.id, this.bus);
     this.bus.on((event) => {
-      if (event.type === 'turn.end' && this.active?.ourTurnId === event.turnId) {
+      const active = this.active;
+      if (event.type === 'turn.end' && active?.ourTurnId === event.turnId) {
+        // A guard-driven timeout/error ends the normalized turn immediately.
+        // Interrupt the underlying Codex turn too; otherwise it keeps running
+        // (and burning tokens) even though the UI already timed out.
+        if (event.reason !== 'end_turn') {
+          active.abortRequested = true;
+          void this.sendInterrupt(active);
+        }
         this.clearActive(event.reason);
       }
     });
@@ -311,6 +324,9 @@ export class CodexRuntime implements AgentRuntime {
         abortRequested: false,
         abortTimer: null,
         usage: null,
+        reasoningText: '',
+        reasoningKind: null,
+        reasoningEnded: false,
       };
       this.active = active;
 
@@ -320,10 +336,14 @@ export class CodexRuntime implements AgentRuntime {
             ? `${input.context}\n\n${input.prompt}`
             : input.prompt;
 
+        const summary = this.config.codex?.reasoningSummary ?? 'auto';
+        const effort = this.config.codex?.reasoningEffort ?? 'medium';
         const result = await this.rpc.request<{ turn?: { id?: string } }>(
           'turn/start',
           {
             threadId: this.threadId,
+            ...(summary !== 'none' ? { summary } : {}),
+            effort,
             input: [
               {
                 type: 'text',
@@ -554,6 +574,44 @@ export class CodexRuntime implements AgentRuntime {
     }
   }
 
+  private appendReasoning(
+    active: ActiveTurn,
+    text: string,
+    kind: 'summary' | 'raw'
+  ): void {
+    const display = this.config.codex?.reasoningDisplay ?? 'auto';
+    if (display === 'off') return;
+    if (display === 'summary' && kind !== 'summary') return;
+    if (display === 'raw' && kind !== 'raw') return;
+    if (active.reasoningEnded) {
+      active.reasoningText = '';
+      active.reasoningKind = null;
+      active.reasoningEnded = false;
+    }
+    if (active.reasoningKind !== null && active.reasoningKind !== kind) {
+      return;
+    }
+    active.reasoningKind = kind;
+    active.reasoningText += text;
+    active.context.emit({ type: 'reasoning.delta', text, kind });
+  }
+
+  private finishReasoning(active: ActiveTurn): void {
+    if (active.reasoningEnded) return;
+    active.reasoningEnded = true;
+    if (
+      active.reasoningKind === null ||
+      active.reasoningText.trim() === ''
+    ) {
+      return;
+    }
+    active.context.emit({
+      type: 'reasoning.end',
+      text: active.reasoningText,
+      kind: active.reasoningKind,
+    });
+  }
+
   private processNotification(method: string, params: unknown): void {
     const active = this.active;
     if (active === null) return;
@@ -561,9 +619,36 @@ export class CodexRuntime implements AgentRuntime {
 
     switch (method) {
       case 'item/agentMessage/delta': {
+        this.finishReasoning(active);
         const delta = getAgentMessageDelta(params);
         if (delta !== undefined) {
           context.emit({ type: 'text.delta', text: delta });
+        }
+        return;
+      }
+
+      case 'item/reasoning/summaryTextDelta': {
+        const delta = getReasoningSummaryDelta(params);
+        if (delta !== undefined && delta !== '') {
+          this.appendReasoning(active, delta, 'summary');
+        }
+        return;
+      }
+
+      case 'item/reasoning/textDelta': {
+        const delta = getReasoningTextDelta(params);
+        if (delta !== undefined && delta !== '') {
+          this.appendReasoning(active, delta, 'raw');
+        }
+        return;
+      }
+
+      case 'item/reasoning/summaryPartAdded': {
+        if (
+          active.reasoningText !== '' &&
+          !active.reasoningText.endsWith('\n\n')
+        ) {
+          this.appendReasoning(active, '\n\n', 'summary');
         }
         return;
       }
@@ -581,6 +666,14 @@ export class CodexRuntime implements AgentRuntime {
       case 'item/completed': {
         if (typeof params !== 'object' || params === null) return;
         const item = (params as { item?: unknown }).item;
+        if (
+          typeof item === 'object' &&
+          item !== null &&
+          (item as { type?: unknown }).type === 'reasoning'
+        ) {
+          this.finishReasoning(active);
+          return;
+        }
         const mapping = mapItem(item, this.config.workspaceRoot, 'completed');
         if (mapping?.end !== undefined) {
           context.emit({ type: 'tool.end', ...mapping.end });
@@ -601,6 +694,7 @@ export class CodexRuntime implements AgentRuntime {
       }
 
       case 'turn/completed': {
+        this.finishReasoning(active);
         const error = getTurnError(params);
         const status =
           typeof params === 'object' && params !== null

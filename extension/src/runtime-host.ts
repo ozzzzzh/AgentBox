@@ -1,5 +1,6 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { createRuntime, type AgentRuntime, type Limits } from '@agentbox/runtime';
@@ -12,6 +13,18 @@ import {
   readEnvValue,
   type ModelSettings,
 } from './settings';
+import {
+  SkillServerClient,
+  type ClientGroupInfo,
+} from './skills/client';
+import { buildSkillInjection } from './skills/injection';
+import type { SkillPackage, SkillUsage } from './skills/model';
+import {
+  readLocalSkills,
+  readRemoteIndex,
+  readRemoteSkills,
+  resolveLocalSkillsDir,
+} from './skills/store';
 import {
   limitsForTaskProfile,
   normalizeTaskProfile,
@@ -48,6 +61,8 @@ export interface AgentRuntimeBundle {
   providerLabel?: string;
   projectInstructionsPath?: string;
   projectInstructionsTruncated?: boolean;
+  skillUsage?: SkillUsage[];
+  skillWarnings?: string[];
 }
 
 /** File write policy patterns configured by the user. */
@@ -84,11 +99,6 @@ export function readLimits(): Partial<Limits> {
     limits.turnTimeoutMs = timeout;
   }
 
-  const maxSteps = configuredValue<number>(config, 'limits.maxSteps');
-  if (typeof maxSteps === 'number' && Number.isInteger(maxSteps) && maxSteps > 0) {
-    limits.maxSteps = maxSteps;
-  }
-
   return limits;
 }
 
@@ -119,6 +129,12 @@ export function readModelSettings(): ModelSettings {
   const config = vscode.workspace.getConfiguration('agentbox');
   const scope = config.get<string>('codex.scope', 'external');
   const approvalPolicy = config.get<string>('codex.approvalPolicy', 'on-request');
+  const reasoningSummary = config.get<string>(
+    'codex.reasoningSummary',
+    'auto'
+  );
+  const reasoningEffort = config.get<string>('codex.reasoningEffort', 'medium');
+  const reasoningDisplay = config.get<string>('codex.reasoningDisplay', 'auto');
 
   return {
     provider: config.get<string>('codex.provider', 'deepseek'),
@@ -132,10 +148,107 @@ export function readModelSettings(): ModelSettings {
       approvalPolicy === 'untrusted' || approvalPolicy === 'never'
         ? approvalPolicy
         : 'on-request',
+    reasoningSummary:
+      reasoningSummary === 'concise' ||
+      reasoningSummary === 'detailed' ||
+      reasoningSummary === 'none'
+        ? reasoningSummary
+        : 'auto',
+    reasoningEffort:
+      reasoningEffort === 'low' || reasoningEffort === 'high'
+        ? reasoningEffort
+        : 'medium',
+    reasoningDisplay:
+      reasoningDisplay === 'summary' ||
+      reasoningDisplay === 'raw' ||
+      reasoningDisplay === 'off'
+        ? reasoningDisplay
+        : 'auto',
     permissions: config.get<string>('codex.permissions', ':workspace'),
     autoSetupSandbox: config.get<boolean>('codex.autoSetupSandbox', true),
     extraInstructions: config.get<string>('codex.extraInstructions', ''),
   };
+}
+
+export interface SkillSettings {
+  localDir: string;
+  serverUrl: string;
+  enabled: string[];
+  disabled: string[];
+  requiredMissing: 'warn' | 'block';
+  autoSync: boolean;
+}
+
+export function readSkillSettings(): SkillSettings {
+  const config = vscode.workspace.getConfiguration('agentbox');
+  const enabled = config.get<string[]>('skills.enabled', []);
+  const disabled = config.get<string[]>('skills.disabled', []);
+  const requiredMissing = config.get<string>('skills.requiredMissing', 'warn');
+  return {
+    localDir: config.get<string>('skills.localDir', ''),
+    serverUrl: config.get<string>('skills.serverUrl', '').trim(),
+    enabled: Array.isArray(enabled)
+      ? enabled.filter((item): item is string => typeof item === 'string')
+      : [],
+    disabled: Array.isArray(disabled)
+      ? disabled.filter((item): item is string => typeof item === 'string')
+      : [],
+    requiredMissing: requiredMissing === 'block' ? 'block' : 'warn',
+    autoSync: config.get<boolean>('skills.autoSync', true),
+  };
+}
+
+export function skillServerTokenKey(): string {
+  return 'agentbox.skillServer.token';
+}
+
+export async function getSkillClientIdentity(
+  context: vscode.ExtensionContext
+): Promise<{ id: string; name: string }> {
+  const key = 'agentbox.skillClientId';
+  let id = context.globalState.get<string>(key);
+  if (typeof id !== 'string' || id.trim() === '') {
+    id = `client-${randomBytes(8).toString('hex')}`;
+    await context.globalState.update(key, id);
+  }
+  const workspace = vscode.workspace.name ?? 'workspace';
+  return { id, name: `${workspace} @ ${hostname()}` };
+}
+
+async function createSkillClient(
+  context: vscode.ExtensionContext
+): Promise<SkillServerClient | undefined> {
+  const settings = readSkillSettings();
+  if (settings.serverUrl === '') return undefined;
+  const stored = await context.secrets.get(skillServerTokenKey());
+  const identity = await getSkillClientIdentity(context);
+  return new SkillServerClient(
+    settings.serverUrl,
+    stored?.trim() || undefined,
+    identity.id,
+    identity.name
+  );
+}
+
+export async function readSkillGroups(
+  context: vscode.ExtensionContext
+): Promise<ClientGroupInfo[]> {
+  const client = await createSkillClient(context);
+  return client === undefined ? [] : client.listClientGroups();
+}
+
+export async function requestSkillGroups(
+  context: vscode.ExtensionContext,
+  groupIds: string[]
+): Promise<ClientGroupInfo[]> {
+  const client = await createSkillClient(context);
+  if (client === undefined) {
+    throw new Error('Skill server URL is not configured');
+  }
+  for (const id of [...new Set(groupIds)]) {
+    await client.requestGroup(id);
+  }
+  return client.listClientGroups();
 }
 
 export function secretKey(provider: string): string {
@@ -213,6 +326,63 @@ async function acknowledgeExternalProvider(
   await context.globalState.update(key, true);
 }
 
+function readSkillsForInjection(context: vscode.ExtensionContext): {
+  requiredText: string;
+  optionalText: string;
+  usage: SkillUsage[];
+  warnings: string[];
+} {
+  const skillSettings = readSkillSettings();
+  const warnings: string[] = [];
+  const local = readLocalSkills(
+    resolveLocalSkillsDir(skillSettings.localDir)
+  );
+  for (const error of local.errors) {
+    warnings.push(`local skill ${error.path}: ${error.message}`);
+  }
+
+  let remote: Array<{ skill: SkillPackage; required: boolean }> = [];
+  if (skillSettings.serverUrl !== '') {
+    const index = readRemoteIndex(
+      context.globalStorageUri.fsPath,
+      skillSettings.serverUrl
+    );
+    if (index === undefined) {
+      const message =
+        '远程 skill 尚未同步。执行 "AgentBox: Sync Remote Skills" 获取团队必选 skill。';
+      if (skillSettings.requiredMissing === 'block') {
+        throw new Error(message);
+      }
+      warnings.push(message);
+    }
+    const cached = readRemoteSkills(
+      context.globalStorageUri.fsPath,
+      skillSettings.serverUrl
+    );
+    for (const error of cached.errors) {
+      warnings.push(`remote skill ${error.path}: ${error.message}`);
+    }
+    remote = cached.items.map((item) => ({
+      skill: item.skill,
+      required: item.required,
+    }));
+  }
+
+  const injection = buildSkillInjection({
+    local: local.items.map((item) => item.skill),
+    remote,
+    enabledIds: skillSettings.enabled,
+    disabledIds: skillSettings.disabled,
+  });
+  warnings.push(...injection.warnings);
+  return {
+    requiredText: injection.requiredText,
+    optionalText: injection.optionalText,
+    usage: injection.usage,
+    warnings,
+  };
+}
+
 /**
  * Build one runtime instance from current settings. Shared by the command
  * fallback and the webview chat panel.
@@ -245,7 +415,6 @@ export async function createAgentRuntime(
 
   const settings = readModelSettings();
   await acknowledgeExternalProvider(context, settings);
-
   const apiKey = await resolveApiKey(context, settings, workspaceRoot);
   if (apiKey === undefined) {
     throw new Error(
@@ -256,6 +425,7 @@ export async function createAgentRuntime(
 
   const home = resolveHome(context, settings, workspaceRoot);
   const project = readProjectInstructions(workspaceRoot);
+  const skills = readSkillsForInjection(context);
   const config = buildCodexRuntimeConfig({
     settings,
     workspaceRoot,
@@ -265,11 +435,29 @@ export async function createAgentRuntime(
     ...(project.text !== undefined
       ? { projectInstructions: project.text }
       : {}),
+    ...(skills.requiredText !== ''
+      ? { requiredSkills: skills.requiredText }
+      : {}),
+    ...(skills.optionalText !== ''
+      ? { optionalSkills: skills.optionalText }
+      : {}),
   });
 
   const keyHash = createHash('sha256').update(apiKey).digest('hex');
   const projectHash = createHash('sha256')
     .update(project.text ?? '')
+    .digest('hex');
+  const skillHash = createHash('sha256')
+    .update(
+      JSON.stringify(
+        skills.usage.map((item) => ({
+          id: item.id,
+          version: item.version,
+          hash: item.hash,
+          source: item.source,
+        }))
+      )
+    )
     .digest('hex');
 
   return {
@@ -283,6 +471,7 @@ export async function createAgentRuntime(
       keyHash,
       projectHash,
       projectPath: project.path ?? null,
+      skillHash,
     }),
     runtimeId,
     modelLabel: settings.model,
@@ -291,5 +480,7 @@ export async function createAgentRuntime(
       ? { projectInstructionsPath: project.path }
       : {}),
     projectInstructionsTruncated: project.truncated,
+    skillUsage: skills.usage,
+    ...(skills.warnings.length > 0 ? { skillWarnings: skills.warnings } : {}),
   };
 }

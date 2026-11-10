@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './chat-view';
 import { RuntimeController } from './controller';
+import { registerSkillCommands } from './skill-commands';
 import { evaluateApprovalPolicy } from './file-policy';
 import { ToolLoopDetector } from './loop-detector';
 import {
@@ -8,8 +9,12 @@ import {
   readDenyWritePatterns,
   readLoopDetectionOptions,
   readModelSettings,
+  readSkillSettings,
+  getSkillClientIdentity,
   secretKey,
+  skillServerTokenKey,
 } from './runtime-host';
+import { syncRemoteSkills } from './skills/client';
 import { VsCodeTurnUi } from './ui/vscode-ui';
 
 let controller: RuntimeController | undefined;
@@ -72,15 +77,63 @@ async function getController(
   return nextController;
 }
 
+function isLoopbackUrl(value: string): boolean {
+  try {
+    const host = new URL(value).hostname;
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  } catch {
+    return false;
+  }
+}
+
+async function autoSyncSkills(context: vscode.ExtensionContext): Promise<void> {
+  const settings = readSkillSettings();
+  if (settings.serverUrl === '' || !settings.autoSync) return;
+  const stored = await context.secrets.get(skillServerTokenKey());
+  const token = stored?.trim() ?? '';
+  // Local dev servers allow anonymous read; do not require a token there.
+  if (token === '' && !isLoopbackUrl(settings.serverUrl)) return;
+  const identity = await getSkillClientIdentity(context);
+  try {
+    await syncRemoteSkills(
+      context.globalStorageUri.fsPath,
+      settings.serverUrl,
+      token === '' ? undefined : token,
+      identity.id,
+      identity.name
+    );
+  } catch (error) {
+    console.warn(
+      `AgentBox skill sync failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
+  void autoSyncSkills(context);
   const provider = new ChatViewProvider(
     context,
     context.extensionUri,
     () => controller?.busy === true
   );
   chatProvider = provider;
+
+  const statusBar = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100
+  );
+  statusBar.name = 'AgentBox';
+  statusBar.text = '$(comment-discussion) AgentBox';
+  statusBar.tooltip = 'Open AgentBox in an editor tab';
+  statusBar.command = 'agentbox.openInEditor';
+  statusBar.show();
+  context.subscriptions.push(statusBar);
+
   context.subscriptions.push(
     provider,
+    ...registerSkillCommands(context),
     vscode.window.registerWebviewViewProvider('agentbox.chat', provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),

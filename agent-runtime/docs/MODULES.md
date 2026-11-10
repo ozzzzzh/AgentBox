@@ -122,9 +122,13 @@ VS Code 代码放在独立包 `extension/`，不进入 `agent-runtime/src`。
 | **D16** | Codex adapter 支持可选 `developerInstructions` 并随 `thread/start` 发送；不传则保持 Codex 默认。内置的环境/文件卫生提示词由消费者（extension）提供 | 避免 runtime 绑定产品提示词，同时让 UI 默认获得 PowerShell/文件卫生约束 |
 | **D17** | 项目指令文件：workspace 根 `AGENTS.md`，回退 `AgentBox.md`；UTF-8、单文件 8k 字符上限；优先级 内置安全规则 > 项目指令 > extraInstructions；内容变化使会话签名变化，下一条 prompt 重建 thread | 让项目约定可版本化，同时不突破安全/文件卫生边界 |
 | **D18** | 审批阶段文件策略：从 `approval.request` 可见路径/命令中匹配 deny glob 与浏览器命令；命中路径/标记直接 deny，浏览器命令 confirm；仅当 Codex 请求审批时生效 | 在不改动 Codex 沙箱的前提下减少垃圾产物；硬限制仍需沙箱/ACL |
-| **D19** | 任务 profile（extension 侧）：`simple` 8 步/90s、`code` 20 步/180s、`research` 30 步/300s；`limits.maxSteps` / `turnTimeoutMs` 显式设置可覆盖 | 简单静态任务不再使用研究级预算，降低 token/时间 |
+| **D19** | 任务 profile（extension 侧）：`simple` 90s、`code` 180s、`research` 300s；`limits.turnTimeoutMs` 显式设置可覆盖；不再按 `maxSteps` 硬中断 | 超时是稳定的止损边界；步数限制容易误伤大任务，改由 reasoning effort、循环检测和 trace 观察 |
 | **D20** | 循环检测（extension 侧）：相同 tool name+args 连续失败 2 次或连续工具失败 4 次 → abort；成功调用重置计数 | 避免 apply_patch/浏览器预览等失败循环耗尽 token |
 | **D21** | 多会话（extension 侧）：每个会话拥有独立的 `RuntimeController` / `codex app-server` 进程与 transcript；同一时刻只允许一个会话运行；侧边栏与 `WebviewPanel` 通过 `session.load` 回放会话事件；关闭会话需长按 `×` 0.65s；会话仅保存在扩展内存中（Reload 后清空） | 在不破坏“单 runtime 单 turn”契约的前提下支持多任务，并让聊天可像文件一样拖到编辑器组；后续可演进为共享 app-server 多 thread + 持久化 |
+| **D22** | Skill 系统分 local / remote：local 固定存用户目录且可选；remote 由 HTTP Registry 管理，版本不可变、上传需审批、`required` 由服务端 admin 控制；注入优先级 内置安全 > remote required > 项目 AGENTS.md > local/optional > extraInstructions；MVP 不执行 skill 脚本 | 先让团队编码规范可版本化、可强制下发，同时保留个人沉淀；Knowledge Base 后续复用同一 remote/local 模型但独立检索 |
+| **D23** | 新增非破坏性事件 `reasoning.delta` / `reasoning.end`，仅转发 Codex/provider 的 reasoning summary，不转发原始 reasoning `textDelta`；UI 流式展示后折叠，host 批量转发且只持久化最终摘要 | 让用户理解等待过程并提供回溯参考，同时避免原始思维链泄露、体量过大和 Markdown 重渲染性能问题 |
+| **D24** | 不按 `maxSteps` / `maxToolCallsPerTurn` 硬中断；Codex 超时/异常结束时发送 `turn/interrupt`；reasoning effort 通过 `turn/start.effort` 配置，默认 medium；reasoning display 默认 auto（有 summary 用 summary，否则 raw） | 步数上限容易误伤大任务；超时 + reasoning effort + trace 更适合控制 thinking 和 token；auto 兼容 DeepSeek 无 summary 的情况 |
+| **D25** | Codex Windows 使用默认 PowerShell；不再提供 `agentbox.codex.shell` / Git Bash PATH 注入。Git Bash 在 Codex sandbox（restricted token）内无法初始化 MSYS signal pipe；bash-capable runtime 见 HANDOFF §10 PENDING-1 | 保持 Codex sandbox/审批完整性；不在 adapter 内继续绕过上游限制 |
 
 ---
 

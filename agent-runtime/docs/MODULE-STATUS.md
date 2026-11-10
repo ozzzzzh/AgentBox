@@ -33,11 +33,15 @@
 | **V3** 双 runtime VSIX | ⬜ | — | — | — | 待 M7/M8 |
 | **V4** Release VSIX | ⬜ | — | — | — | 待 V4 发布流程（M9/M10 已就绪） |
 | **UI-1** Webview 侧边栏 MVP | ✅ | 2026-10-31 | `extension@0.3.0` + `agentbox-0.3.0.vsix` | 67 | build / test / package / 隔离安装通过；含多会话与编辑器面板 |
+| **SK-1..S6** Skill 系统 MVP | ✅ | 2026-11-02 | [SKILL-SYSTEM.md](SKILL-SYSTEM.md)、`extension/src/skills/*`、`skill-server/` | 95 + 9 | 本地/远程 skill、HTTP Registry、审批、required、同步、注入、技能抽屉/@ 主动调用通过 |
+| **PERF-1** Turn 超时/推理强度 | ✅ | 2026-11-05 | [PERFORMANCE.md](PERFORMANCE.md)、controller/runtime | 94 | 超时 turn/interrupt、reasoning effort medium、reasoning display auto/raw、提示词硬化 |
+| **M11** Runtime 解耦 / bash-capable runtime | ⬜ 暂缓 | — | [HANDOFF.md](HANDOFF.md) §10 PENDING-1 | — | Codex 已回退 PowerShell（2026-11-06）；先完成 Skill Server/KB；当前保持 `AgentRuntime`/`AgentEvent` 契约纪律 |
 
-**当前累计**：208 个测试通过（默认套件）。
+**当前累计**：246 个测试通过（默认套件）。
 
-- `agent-runtime`：141 个测试 / 14 个文件（含 CLI 15、eval 9）
-- `extension`：67 个测试 / 11 个文件（controller 11、settings 7、chat-view 17、timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、bundle 1）
+- `agent-runtime`：142 个测试 / 14 个文件（含 CLI 15、eval 9）
+- `extension`：95 个测试 / 18 个文件（controller 11、settings 8、chat-view 19、timeline 5、context 5、webview-ui 6、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、skills-model 4、skills-store 5、skills-injection 5、skills-catalog 2、skills-mentions 3、skills-client 5、bundle 1）
+- `skill-server`：9 个测试（Node test runner）
 - 另有 1 个真实 Codex 集成测试（`V2_E2E=1` 手动运行）已通过。
 - 10 条 eval 基线已跑通：9/10（90%）。
 
@@ -598,11 +602,12 @@ npm run verify   # build + vitest + check-boundaries
 
 **测试与验证**
 
-- `extension` 67 个测试 / 11 个文件：
-  controller 11、settings 7、chat-view 17、timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、bundle 1。
+- `extension` 95 个测试 / 18 个文件：
+  controller 11、settings 8、chat-view 19、timeline 5、context 5、webview-ui 6、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、skills-model 4、skills-store 5、skills-injection 5、skills-catalog 2、skills-mentions 3、skills-client 5、bundle 1。
+- `skill-server` 9 个测试：healthz、上传 pending、审批可见性、required policy、自审限制、reject/revoke。
 - 时间线模型测试：`tests/timeline.spec.ts`（LLM 推导、审批独立、失败标记、
   open span 延展、finish/reset）。
-- `npm run verify` 通过；`agentbox-0.3.0.vsix` 96.67 KB（9 files）。
+- `npm run verify` 通过；`agentbox-0.3.0.vsix` 123.04 KB（9 files）。
 - VSIX 隔离 `--extensions-dir` 安装成功。
 - 1 个真实 Codex 集成测试（`V2_E2E=1`）在 UI-1 收尾时重新运行通过：
   Codex + DeepSeek、合成临时工作区、9.25s。

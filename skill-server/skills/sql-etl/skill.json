@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "sql-etl",
+  "name": "SQL ETL Review",
+  "version": "1.0.0",
+  "description": "Checklist for reviewing ETL SQL changes: incremental keys, idempotency, and rollback.",
+  "owner": "data-platform",
+  "activation": "on-demand",
+  "triggers": { "keywords": ["etl", "sql", "incremental", "batch"] },
+  "priority": 80,
+  "budget": { "maxChars": 2400 },
+  "required": false
+}

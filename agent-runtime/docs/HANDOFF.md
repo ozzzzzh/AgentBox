@@ -75,6 +75,7 @@ AgentBox 的目标不是"再造一个 coding agent"，而是：
 | Node（开发/测试） | v24.14.1 |
 | VS Code | 本机 1.142.0（`code` CLI）；`engines.vscode ^1.85.0`；扩展宿主为 Node 18，runtime 代码需兼容 Node 18 API |
 | PowerShell | 只有 Windows PowerShell 5.1，**没有 `pwsh`** |
+| Shell | Codex 使用 **Windows PowerShell 5.1**；Git Bash 尝试已回退（Codex Windows sandbox 与 MSYS2 不兼容），bash-capable runtime 见 §10 PENDING-1 |
 | 现有扩展 | `pluginVersion/vscode-extension`，TypeScript `module: commonjs`、`target ES2022`、`engines.vscode ^1.85.0` |
 | 模型网关 | LiteLLM `http://172.22.26.117:8085/v1`，OpenAI-compatible；无 key 返回 401 |
 | 当前模型 | `Qwen3-235B-A22B-Instruct-2507`；**优先确认是否有 Qwen3-Coder** |
@@ -193,12 +194,14 @@ VS Code 集成在下一阶段通过消费者/adapter 完成。
 | `tests/events.spec.ts` / `turn.spec.ts` | ✅ **M4**：18 个测试 |
 | `tests/contract/fake.spec.ts` | ✅ **M5**：14 个测试（含 9 个通用契约用例） |
 | `package.json` / `tsconfig.json` | ✅ 脚手架 + `check:boundaries` / `verify` + `./testing` 导出 |
-| `../../extension/` | ✅ **UI-1**：Webview 侧栏 + 可拖动编辑器面板、多会话标签栏（新建/切换/长按关闭，独立 Codex 进程）、左右留白、图标上下文切换（文件/选区默认选中）、右侧居中问题导航（圆点/附近 10 个窗口/20 字预览）、内嵌设置浮层、内置工作流/PowerShell/文件卫生提示词、AGENTS.md 项目指令、审批文件策略、任务 profile、工具循环检测、思考计时、Markdown 分级/左右对齐角色标签/分隔线/代码复制、发送/取消合并、输入框上方三条泳道可折叠时间线、色块统计、token 用量、命令不进对话、watcher 兜底；保留输出通道降级 |
+| `../../extension/` | ✅ **UI-1**：Webview 侧栏 + 可拖动编辑器面板、多会话标签栏（新建/切换/长按关闭，独立 Codex 进程）、左右留白、图标上下文切换（文件/选区默认选中）、右侧居中问题导航（圆点/附近 10 个窗口/20 字预览）、内嵌设置浮层、内置工作流/PowerShell/文件卫生提示词、AGENTS.md 项目指令、审批文件策略、任务 profile、工具循环检测、Skill 本地/远程（Registry/审批/required/同步/注入 chips/勾选抽屉/@ 主动调用）、reasoning summary/raw 处理过程容器（思考/工具/生成按时间顺序、最终回答独立展开）、思考计时、超时中断与推理强度/性能硬化（PERFORMANCE.md）、Markdown 分级/左右对齐角色标签/分隔线/代码复制、发送/取消合并、输入框上方三条泳道可折叠时间线、色块统计、token 用量、命令不进对话、watcher 兜底；保留输出通道降级 |
 | `extension/src/chat-view.ts` / `chat-protocol.ts` / `ui/webview-ui.ts` | ✅ **UI-1**：侧栏宿主、消息协议、结构化 TurnUi |
 | `extension/src/context.ts` / `webview/chat.ts` / `webview/timeline.ts` / `media/chat.css` | ✅ **UI-1**：上下文拼接、vanilla 前端、活动时间线模型、主题样式 |
-| `../../extension/agentbox-0.3.0.vsix` | ✅ 96.67 KB（9 files），隔离 `--extensions-dir` 安装成功 |
-| `npm run verify`（runtime） | ✅ 141 个测试通过（含 CLI 15、eval 9） |
-| `npm run verify`（extension） | ✅ 67 个测试通过（controller 11、settings 7、chat-view 17、timeline 5、context 5、webview-ui 5、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、bundle 1） |
+| `extension/src/skills/*` / `skill-commands.ts` / `../../skill-server/` | ✅ **Skill S1–S6**：本地/远程 skill、包校验/hash、Registry、审批/required、同步、注入、命令/UI |
+| `../../extension/agentbox-0.3.0.vsix` | ✅ 123.04 KB（9 files），隔离 `--extensions-dir` 安装成功 |
+| `npm run verify`（runtime） | ✅ 142 个测试通过（含 CLI 15、eval 9） |
+| `npm run verify`（extension） | ✅ 95 个测试通过（controller 11、settings 8、chat-view 19、timeline 5、context 5、webview-ui 6、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、skills-model 4、skills-store 5、skills-injection 5、skills-catalog 2、skills-mentions 3、skills-client 5、bundle 1） |
+| `npm test`（skill-server） | ✅ 9 个测试通过（Node test runner） |
 | 真实 Codex 集成（`V2_E2E=1`） | ✅ UI-1 收尾重跑通过（DeepSeek、合成工作区、9.25s） |
 | 10 条 eval | ✅ Codex + DeepSeek 基线 **9/10（90%）** |
 | 真实 V2 controller + Codex | ✅ `V2_E2E=1` 手动集成测试通过（写文件 8.7s） |
@@ -241,7 +244,7 @@ P0 当前结论：
 - **审批/取消 headless 真实 Codex 也已通过**：
   - `untrusted` 和 workspace 外写均触发 `approval.request`；Deny 后工具未执行、turn 正常结束；
   - Cancel 在 124ms 内 `turn cancelled`；脚本 `.probe/v2-approval-cancel-probe.cjs`。
-- DeepSeek + Windows 下 `apply_patch` 可能多次失败后改用 PowerShell；建议 `maxSteps` 保持 24–30。
+- DeepSeek + Windows 下 `apply_patch` 可能多次失败后改用 PowerShell；不再依赖 `maxSteps` 硬停，使用 reasoningEffort + turnTimeout 控制成本。
 - **下一步：补测 V2 审批/取消，然后 10 条 eval。**
 
 ---
@@ -257,9 +260,13 @@ P0 当前结论：
    内联审批、patch 文本、显式上下文、中文 UI）。
 3. **UI-1**：✅ 已完成侧边 Webview + 多会话 + 流式/工具卡/内联审批/Stop/上下文/watcher 兜底。
 4. **UI-2**：transcript/会话持久化、原生 diff、重试/错误恢复（token/耗时已由时间线提供）。
-5. **UI-3**：Skill 库 / 知识面板（等后端契约）。
-6. **M7**（可选/暂缓）：OpenCode adapter → V3；需要双 runtime 时再做。
-7. **内网 Qwen/Qwen3-Coder**：生产部署前确认。
+5. **Skill 系统**：✅ S1–S6 MVP 已完成，见 [SKILL-SYSTEM.md](SKILL-SYSTEM.md)；
+   `extension/src/skills/*`、`extension/src/skill-commands.ts`、`skill-server/`。
+   验证方案见 [SKILL-VERIFICATION.md](SKILL-VERIFICATION.md)。Knowledge Base 见 [KNOWLEDGE-BASE.md](KNOWLEDGE-BASE.md)。
+6. **UI-3**：Skill 库 / 知识面板（已具备命令/QuickPick/chips，完整面板可继续迭代）。
+7. **M7 / M11**（暂缓）：OpenCode adapter / Runtime 解耦 / srt；
+   见 §10 PENDING-1。先完成 Skill Server 与 KB，再回来处理。
+8. **内网 Qwen/Qwen3-Coder**：生产部署前确认。
 
 ---
 
@@ -278,9 +285,10 @@ P0 当前结论：
 先读 docs/MILESTONE-1.md、docs/UI-PROPOSAL.md、docs/MODULE-STATUS.md、docs/HANDOFF.md。
 M1–M6、M8、M9、M10、V1、V2、UI-1 已完成；M7 暂缓。
 下一步：
-1. UI-2：transcript 持久化、原生 diff、重试/错误恢复（token/耗时已由时间线提供）；
-2. UI-3：Skill 库 / 知识面板（等后端契约）；
-3. 内网 Qwen 确认仍作为生产部署前事项。
+1. Skill 系统：S1–S6 MVP 已完成，先读 docs/SKILL-SYSTEM.md 与 skill-server/README.md；
+2. UI-2：transcript 持久化、原生 diff、重试/错误恢复（token/耗时已由时间线提供）；
+3. UI-3：Skill 库 / 知识面板（命令/QuickPick/chips 已有，完整面板可继续迭代）；
+4. 内网 Qwen 确认仍作为生产部署前事项。
 完成情况记录在 docs/MODULE-STATUS.md；每完成一个模块必须更新。
 产物：../../extension/agentbox-0.3.0.vsix；构建/打包见 extension/README.md。
 UI 消费者继续只依赖 createRuntime + AgentEvent，不修改 adapter。
@@ -316,3 +324,47 @@ UI 消费者继续只依赖 createRuntime + AgentEvent，不修改 adapter。
 | 两个 runtime 的遥测/更新检查能否关闭 | 保密合规 | 断网环境验证；必要时防火墙 |
 | Codex/OpenCode 许可证与 NOTICE | 合规 | 保留 LICENSE/NOTICE；法务确认 |
 | Windows 进程树/编码问题 | 稳定性 | taskkill /T；UTF-8 preamble；集成测试 |
+
+---
+
+## 10. 待决事件（Decision Queue）
+
+### PENDING-1：Runtime 解耦、热切换与 bash-capable runtime
+
+- **状态**：⏸ 暂缓，不阻塞当前产品设计（2026-11-06）
+- **背景**：
+  - Codex Windows sandbox 使用 restricted token，MSYS2/Git Bash 启动时无法创建
+    signal pipe；`unelevated` / `elevated` / `mxc` 都不能可靠运行 Git Bash。
+  - 已实测 OpenCode 1.19.4：设置 `SHELL` / `OPENCODE_GIT_BASH_PATH` 指向
+    Git Bash 后，其 `bash` tool 返回 `MINGW64_NT`；`OpenCodeRuntime` 仍是 stub。
+  - Anthropic `sandbox-runtime` 是**命令沙箱**，不是 agent runtime；Windows
+    后端 alpha，使用 `srt-sandbox` 账户 + write-restricted token，Git Bash/MSYS2
+    是否可用尚未验证，需单独 spike。
+  - 当前 `AgentRuntime` / `AgentEvent` / `RuntimeController` 解耦良好；但
+    `runtime-host`、`ModelSettings`、设置 UI 仍以 Codex 为中心；没有 per-session
+    runtime，也不能热切换。
+- **决策**：
+  - **2026-11-06：Codex 的 Git Bash 尝试已回退，统一使用 PowerShell**；
+    移除 `agentbox.codex.shell`、Git Bash PATH 注入、Shell/Sandbox 设置项，
+    不修改 Codex 的 sandbox/审批完整性。
+  - **现在不把 runtime 解耦作为优先项**；先完成整体产品设计、Skill Server
+    联调、知识库交互。
+  - 当前阶段不实现 OpenCode adapter / srt / 自研 NativeRuntime。
+  - 新功能必须继续只依赖 `AgentRuntime` + `AgentEvent` + `RuntimeController`；
+    不得在 UI/Controller 中新增 `runtime === 'codex'` 分支。
+  - 新增 runtime 配置必须命名空间化（`codex.*` / `opencode.*` / `srt.*`），
+    不要继续扩散到通用 `ModelSettings`。
+- **重新评估触发条件**（任一）：
+  1. Skill Server 与 KB MVP 完成并稳定；
+  2. 需要同时支持第二个 runtime；
+  3. 需要“Git Bash + 系统级沙箱”同时成立；
+  4. Codex 上游修复 Windows shell/sandbox。
+- **候选顺序**：
+  1. Runtime Registry + generic `RuntimeOptions` + per-session `runtimeId`（2–3d）；
+  2. OpenCode adapter（8–12d，bash 已验证）；
+  3. srt Windows + Git Bash spike（1d，只验证 `uname -s` 是否为 `MINGW64`）；
+  4. 若 srt 可用：NativeRuntime + srt（20–30d）；否则 OpenCode 优先。
+- **未来验收标准**：
+  - 新增 runtime 不改 `RuntimeController` / Webview；
+  - 切换 runtime 在 turn 边界完成，保留 UI transcript；
+  - 每个 runtime 有 contract test；Codex 行为不回归。

@@ -106,6 +106,19 @@ describe('CodexRuntime mapping', () => {
     expect(events.filter((event) => event.type === 'text.delta').map((event) => event.text).join(''))
       .toBe('hello world');
     expect(
+      events
+        .filter((event) => event.type === 'reasoning.delta')
+        .map((event) => event.text)
+        .join('')
+    ).toBe('checking files\n\nthen edit');
+    const reasoningEnd = events.find(
+      (event) => event.type === 'reasoning.end'
+    );
+    expect(reasoningEnd?.type).toBe('reasoning.end');
+    if (reasoningEnd?.type === 'reasoning.end') {
+      expect(reasoningEnd.text).toBe('checking files\n\nthen edit');
+    }
+    expect(
       events.some(
         (event) =>
           event.type === 'tool.start' &&
@@ -129,6 +142,42 @@ describe('CodexRuntime mapping', () => {
     if (usage?.type === 'token.usage') {
       expect(usage.usage.last.totalTokens).toBe(140);
       expect(usage.usage.total.totalTokens).toBe(380);
+    }
+
+    await runtime.stop();
+  });
+
+  it('falls back to raw reasoning text when no summary is available', async () => {
+    const runtime = new CodexRuntime(makeConfig());
+    const events: AgentEvent[] = [];
+    runtime.onEvent((event) => events.push(event));
+    await runtime.start();
+
+    const handle = await runtime.startTurn({
+      prompt: '__raw_reasoning__',
+      workspaceRoot,
+      limits: { turnTimeoutMs: 5_000 },
+    });
+    await waitForEvent(
+      runtime,
+      events,
+      (event) => event.type === 'turn.end' && event.turnId === handle.turnId
+    );
+
+    expect(
+      events
+        .filter(
+          (event) =>
+            event.type === 'reasoning.delta' && event.kind === 'raw'
+        )
+        .map((event) => event.text)
+        .join('')
+    ).toBe('raw thinking fallback');
+    const end = events.find((event) => event.type === 'reasoning.end');
+    expect(end?.type).toBe('reasoning.end');
+    if (end?.type === 'reasoning.end') {
+      expect(end.kind).toBe('raw');
+      expect(end.text).toBe('raw thinking fallback');
     }
 
     await runtime.stop();

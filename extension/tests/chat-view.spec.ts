@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   activeTextEditor: undefined as unknown,
   openedExternal: [] as string[],
   config: new Map<string, unknown>(),
+  secrets: new Map<string, string>(),
   messages: [] as Array<Record<string, unknown>>,
   receiveHandler: undefined as ((message: unknown) => void) | undefined,
   watchers: [] as Array<Record<string, unknown>>,
@@ -184,6 +185,19 @@ const context = {
   subscriptions: [],
   extensionUri: { fsPath: 'D:/ext', path: 'D:/ext' },
   globalStorageUri: { fsPath: 'D:/state' },
+  secrets: {
+    get: async (key: string): Promise<string | undefined> => state.secrets.get(key),
+    store: async (key: string, value: string): Promise<void> => {
+      state.secrets.set(key, value);
+    },
+    delete: async (key: string): Promise<void> => {
+      state.secrets.delete(key);
+    },
+  },
+  globalState: {
+    get: (): undefined => undefined,
+    update: async (): Promise<void> => undefined,
+  },
 };
 
 let workspaceRoot: string;
@@ -195,7 +209,9 @@ beforeEach(() => {
   state.activeTextEditor = undefined;
   state.openedExternal = [];
   state.config.clear();
+  state.secrets.clear();
   state.config.set('runtime', 'fake');
+  state.config.set('skills.localDir', join(workspaceRoot, 'skills-local'));
   state.messages = [];
   state.receiveHandler = undefined;
   state.watchers = [];
@@ -248,6 +264,9 @@ describe('ChatViewProvider', () => {
     expect(webview.html).toContain('id="question-nav"');
     expect(webview.html).toContain('id="question-tooltip"');
     expect(webview.html).toContain('id="session-bar"');
+    expect(webview.html).toContain('id="skill-bar"');
+    expect(webview.html).toContain('id="skills-panel"');
+    expect(webview.html).toContain('id="skills"');
     expect(webview.html).toContain('id="lane-thinking"');
     expect(webview.html).toContain('id="lane-generation"');
     expect(webview.html).toContain('id="lane-tool"');
@@ -257,8 +276,8 @@ describe('ChatViewProvider', () => {
     expect(webview.html).toContain('id="toggle-file"');
     expect(webview.html).toContain('id="submit"');
     expect(webview.html).toContain('id="setting-approval"');
-    expect(webview.html).not.toContain('type="checkbox"');
-    expect(webview.html).not.toMatch(/https?:\/\//i);
+    expect(webview.html).toContain('id="setting-skills-auto-sync"');
+    expect(webview.html).not.toMatch(/src="https?:/i);
   });
 
   it('posts runtime state and active context when the webview is ready', () => {
@@ -385,6 +404,9 @@ describe('ChatViewProvider', () => {
     expect(state.panels).toHaveLength(1);
     const webview = state.panels[0]?.webview as { html: string };
     expect(webview.html).toContain('id="session-bar"');
+    expect(webview.html).toContain('id="skill-bar"');
+    expect(webview.html).toContain('id="skills-panel"');
+    expect(webview.html).toContain('id="skills"');
     expect(webview.html).toContain('id="open-editor"');
   });
 
@@ -396,11 +418,12 @@ describe('ChatViewProvider', () => {
     expect(state.messages).toContainEqual({ type: 'settings.open' });
   });
 
-  it('returns current settings to the panel', () => {
+  it('returns current settings to the panel', async () => {
     resolveView();
 
     state.receiveHandler?.({ type: 'settings.request' });
 
+    await waitFor(() => state.messages.some((message) => message.type === 'settings'));
     expect(state.messages).toContainEqual({
       type: 'settings',
       values: {
@@ -410,6 +433,15 @@ describe('ChatViewProvider', () => {
         model: 'deepseek-flash',
         baseUrl: 'https://api.deepseek.com',
         approvalPolicy: 'on-request',
+        reasoningEffort: 'medium',
+        apiKeyConfigured: false,
+        codexCommand: 'codex',
+        extraInstructions: '',
+        skillServerUrl: '',
+        skillServerTokenConfigured: false,
+        skillsAutoSync: true,
+        skillsRequiredMissing: 'warn',
+        skillsLocalDir: join(workspaceRoot, 'skills-local'),
       },
     });
   });
@@ -426,6 +458,7 @@ describe('ChatViewProvider', () => {
         model: 'deepseek-flash',
         baseUrl: 'https://api.deepseek.com',
         approvalPolicy: 'untrusted',
+        reasoningEffort: 'medium',
       },
     });
 
@@ -440,11 +473,52 @@ describe('ChatViewProvider', () => {
     expect(state.config.get('runtime')).toBe('codex');
     expect(state.config.get('taskProfile')).toBe('simple');
     expect(state.config.get('codex.approvalPolicy')).toBe('untrusted');
+    expect(state.config.get('codex.reasoningEffort')).toBe('medium');
     expect(state.messages).toContainEqual({ type: 'clear' });
     expect(state.messages).toContainEqual({ type: 'settings.saved' });
     expect(state.messages).toContainEqual(
       expect.objectContaining({ type: 'state', runtime: 'codex' })
     );
+  });
+
+  it('saves secrets and skill server settings from the webview', async () => {
+    resolveView();
+
+    state.receiveHandler?.({
+      type: 'settings.save',
+      values: {
+        runtime: 'fake',
+        taskProfile: 'code',
+        provider: 'deepseek',
+        model: 'deepseek-flash',
+        baseUrl: 'https://api.deepseek.com',
+        approvalPolicy: 'on-request',
+        reasoningEffort: 'medium',
+        apiKey: 'sk-test',
+        skillServerToken: 'server-token',
+        skillServerUrl: 'http://127.0.0.1:4770',
+        skillsAutoSync: true,
+        skillsRequiredMissing: 'block',
+        skillsLocalDir: join(workspaceRoot, 'local-skills'),
+        codexCommand: 'codex-custom',
+        extraInstructions: 'EXTRA_RULE',
+      },
+    });
+
+    await waitFor(() =>
+      state.messages.some((message) => message.type === 'settings.saved')
+    );
+
+    expect(state.secrets.get('agentbox.apiKey.deepseek')).toBe('sk-test');
+    expect(state.secrets.get('agentbox.skillServer.token')).toBe('server-token');
+    expect(state.config.get('skills.serverUrl')).toBe('http://127.0.0.1:4770');
+    expect(state.config.get('skills.autoSync')).toBe(true);
+    expect(state.config.get('skills.requiredMissing')).toBe('block');
+    expect(state.config.get('skills.localDir')).toBe(
+      join(workspaceRoot, 'local-skills')
+    );
+    expect(state.config.get('codex.command')).toBe('codex-custom');
+    expect(state.config.get('codex.extraInstructions')).toBe('EXTRA_RULE');
   });
 
   it('rejects invalid settings values', async () => {
@@ -459,6 +533,7 @@ describe('ChatViewProvider', () => {
         model: '',
         baseUrl: '',
         approvalPolicy: 'on-request',
+        reasoningEffort: 'medium',
       },
     });
 
@@ -541,6 +616,19 @@ describe('ChatViewProvider', () => {
       type: 'session.load',
       id: sessions.activeId,
       events: [],
+    });
+    expect(state.messages).toContainEqual({ type: 'skills', skills: [] });
+  });
+
+  it('returns the skill catalog for the drawer', () => {
+    resolveView();
+    state.receiveHandler?.({ type: 'ready' });
+
+    state.receiveHandler?.({ type: 'skills.open' });
+
+    expect(state.messages).toContainEqual({
+      type: 'skills.catalog',
+      items: [],
     });
   });
 

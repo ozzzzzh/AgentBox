@@ -2,6 +2,9 @@ import type {
   ApprovalDecision,
   StopReason,
 } from '@agentbox/runtime';
+import type { SkillCatalogItem } from './skills/catalog';
+import type { ClientGroupInfo } from './skills/client';
+import type { SkillUsage } from './skills/model';
 
 export interface ContextInfo {
   file?: string;
@@ -19,6 +22,21 @@ export interface SettingsValues {
   model: string;
   baseUrl: string;
   approvalPolicy: string;
+  reasoningEffort: string;
+  /** Whether a key exists for the current provider. Never the key itself. */
+  apiKeyConfigured: boolean;
+  codexCommand: string;
+  extraInstructions: string;
+  skillServerUrl: string;
+  skillServerTokenConfigured: boolean;
+  skillsAutoSync: boolean;
+  skillsRequiredMissing: string;
+  skillsLocalDir: string;
+  /** Write-only values; empty means keep the stored secret. */
+  apiKey?: string;
+  skillServerToken?: string;
+  clearApiKey?: boolean;
+  clearSkillServerToken?: boolean;
 }
 
 export interface SessionSummary {
@@ -37,6 +55,8 @@ export type SessionEvent =
   | { type: 'busy'; busy: boolean }
   | { type: 'turn.start'; turnId: string }
   | { type: 'assistant.delta'; text: string }
+  | { type: 'reasoning.delta'; text: string; kind?: 'summary' | 'raw' }
+  | { type: 'reasoning.end'; text: string; kind?: 'summary' | 'raw' }
   | {
       type: 'tool.start';
       callId: string;
@@ -82,6 +102,9 @@ export type HostToWebview =
     }
   | { type: 'sessions'; sessions: SessionSummary[]; activeId: string }
   | { type: 'session.load'; id: string; events: SessionEvent[] }
+  | { type: 'skills'; skills: SkillUsage[] }
+  | { type: 'skills.catalog'; items: SkillCatalogItem[] }
+  | { type: 'skills.groups'; groups: ClientGroupInfo[] }
   | { type: 'context'; context: ContextInfo }
   | { type: 'settings'; values: SettingsValues }
   | { type: 'settings.open' }
@@ -105,11 +128,20 @@ export type WebviewToHost =
       decision: ApprovalDecision;
     }
   | { type: 'openFile'; path: string }
+  | { type: 'openToolDetails'; callId: string }
   | { type: 'openExternal'; url: string }
   | { type: 'openEditor' }
   | { type: 'showLog' }
   | { type: 'settings.request' }
   | { type: 'settings.save'; values: SettingsValues }
+  | { type: 'skills.open' }
+  | { type: 'skills.toggle'; id: string; enabled: boolean }
+  | { type: 'skills.create' }
+  | { type: 'skills.openFolder' }
+  | { type: 'skills.upload' }
+  | { type: 'skills.sync' }
+  | { type: 'skills.requestGroups' }
+  | { type: 'skills.joinGroups'; ids: string[] }
   | { type: 'session.new' }
   | { type: 'session.select'; id: string }
   | { type: 'session.close'; id: string; confirm: boolean };

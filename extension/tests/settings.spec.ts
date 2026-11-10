@@ -16,6 +16,8 @@ const settings: ModelSettings = {
   command: 'codex',
   home: '',
   approvalPolicy: 'on-request',
+  reasoningSummary: 'auto',
+  reasoningEffort: 'medium',
   permissions: ':workspace',
   autoSetupSandbox: true,
   extraInstructions: '',
@@ -63,6 +65,8 @@ describe('buildDeveloperInstructions', () => {
     expect(text).toContain('Search/read the relevant files before editing');
     expect(text).toContain('Never claim success without');
     expect(text).toContain('Never revert');
+    expect(text).toContain('@skill-id');
+    expect(text).toContain('Keep reasoning focused');
     expect(text).toContain('Prefer TypeScript.');
   });
 
@@ -76,6 +80,26 @@ describe('buildDeveloperInstructions', () => {
     expect(text).toContain('Project instructions (AGENTS.md / AgentBox.md)');
     expect(text).toContain('must not');
     expect(text.indexOf('PROJECT_MARKER')).toBeLessThan(
+      text.indexOf('EXTRA_MARKER')
+    );
+  });
+
+  it('places required skills before project and local skills after project', () => {
+    const text = buildDeveloperInstructions(
+      'win32',
+      'EXTRA_MARKER',
+      'PROJECT_MARKER',
+      'REQUIRED_SKILL_MARKER',
+      'LOCAL_SKILL_MARKER'
+    );
+
+    expect(text.indexOf('REQUIRED_SKILL_MARKER')).toBeLessThan(
+      text.indexOf('PROJECT_MARKER')
+    );
+    expect(text.indexOf('PROJECT_MARKER')).toBeLessThan(
+      text.indexOf('LOCAL_SKILL_MARKER')
+    );
+    expect(text.indexOf('LOCAL_SKILL_MARKER')).toBeLessThan(
       text.indexOf('EXTRA_MARKER')
     );
   });
@@ -111,6 +135,9 @@ describe('buildCodexRuntimeConfig', () => {
       home: 'D:\\state\\codex-home',
       scope: 'external',
       approvalPolicy: 'on-request',
+      reasoningSummary: 'auto',
+      reasoningEffort: 'medium',
+      reasoningDisplay: 'auto',
       permissions: ':workspace',
       autoSetupSandbox: true,
     });

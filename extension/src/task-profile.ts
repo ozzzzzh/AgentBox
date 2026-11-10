@@ -17,24 +17,18 @@ export const TASK_PROFILES: Record<TaskProfileId, TaskProfile> = {
   simple: {
     label: '简单文件（静态 HTML/CSS/单文件）',
     limits: {
-      maxSteps: 8,
-      maxToolCallsPerTurn: 10,
       turnTimeoutMs: 90_000,
     },
   },
   code: {
     label: '常规编码',
     limits: {
-      maxSteps: 20,
-      maxToolCallsPerTurn: 30,
       turnTimeoutMs: 180_000,
     },
   },
   research: {
     label: '研究/多步任务',
     limits: {
-      maxSteps: 30,
-      maxToolCallsPerTurn: 40,
       turnTimeoutMs: 300_000,
     },
   },

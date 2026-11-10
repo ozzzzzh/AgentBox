@@ -140,6 +140,7 @@ export function evaluateApprovalPolicy(
 ): ApprovalPolicyResult {
   const args = isRecord(prompt.args) ? prompt.args : {};
 
+
   for (const rawPath of collectPaths(args)) {
     const path = normalizePath(rawPath, workspaceRoot);
     const matched = matchDenyPattern(path, denyPatterns);

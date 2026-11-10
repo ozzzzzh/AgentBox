@@ -116,13 +116,21 @@ describe('bundled extension', () => {
           'agentbox.cancelTurn',
           'agentbox.clearApiKey',
           'agentbox.configure',
+          'agentbox.createSkill',
           'agentbox.focusSidebar',
           'agentbox.openChat',
           'agentbox.openInEditor',
+          'agentbox.openSkillsFolder',
           'agentbox.restartRuntime',
           'agentbox.runTurn',
           'agentbox.setApiKey',
+          'agentbox.setSkillServerToken',
           'agentbox.showOutput',
+          'agentbox.skillSettings',
+          'agentbox.skills',
+          'agentbox.syncSkills',
+          'agentbox.uploadSkill',
+          'agentbox.validateSkill',
         ]);
         expect(subscriptions.length).toBeGreaterThanOrEqual(3);
 

@@ -77,12 +77,13 @@ afterEach(async () => {
 function makeController(
   runtime: AgentRuntime,
   ui: FakeUi,
-  root = workspaceRoot
+  root = workspaceRoot,
+  limits: { turnTimeoutMs?: number } = {}
 ): RuntimeController {
   const controller = new RuntimeController({
     runtime,
     workspaceRoot: root,
-    limits: { turnTimeoutMs: 5_000 },
+    limits: { turnTimeoutMs: 5_000, ...limits },
     ui,
   });
   controllers.push(controller);

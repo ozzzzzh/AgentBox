@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "frontend-style",
+  "name": "Frontend Style",
+  "version": "0.1.0",
+  "description": "Layout, spacing, and accessibility conventions for internal frontends.",
+  "owner": "web-platform",
+  "activation": "on-demand",
+  "triggers": { "keywords": ["frontend", "css", "layout", "accessibility"] },
+  "priority": 50,
+  "budget": { "maxChars": 2000 },
+  "required": false
+}

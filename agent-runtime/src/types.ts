@@ -80,6 +80,20 @@ export type AgentEvent =
       metadata?: Record<string, unknown>;
     }
   | { type: 'text.delta'; turnId: string; text: string; at: number }
+  | {
+      type: 'reasoning.delta';
+      turnId: string;
+      text: string;
+      kind: 'summary' | 'raw';
+      at: number;
+    }
+  | {
+      type: 'reasoning.end';
+      turnId: string;
+      text: string;
+      kind: 'summary' | 'raw';
+      at: number;
+    }
   | { type: 'tool.start'; turnId: string; callId: string; name: string; args: unknown; at: number }
   | { type: 'tool.end'; turnId: string; callId: string; name: string; ok: boolean; result: string; at: number }
   | { type: 'approval.request'; turnId: string; callId: string; name: string; args: unknown; at: number }
@@ -169,6 +183,18 @@ export interface CodexRuntimeConfig {
   scope?: 'internal' | 'external';
   /** Thread approval policy. Default: "on-request". */
   approvalPolicy?: 'untrusted' | 'on-request' | 'never';
+  /**
+   * Reasoning summary mode sent with turn/start. Default: "auto".
+   * The runtime only forwards summary deltas, never raw reasoning.
+   */
+  reasoningSummary?: 'auto' | 'concise' | 'detailed' | 'none';
+  /** Reasoning effort sent with turn/start. Default: "medium". */
+  reasoningEffort?: 'low' | 'medium' | 'high';
+  /**
+   * Which reasoning text to forward: provider summaries, raw reasoning text,
+   * or the first available form. Default: "auto".
+   */
+  reasoningDisplay?: 'auto' | 'summary' | 'raw' | 'off';
   /** Codex permissions profile id. Default: ":workspace" on Windows, "read-only" otherwise. */
   permissions?: string;
   /**

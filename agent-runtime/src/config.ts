@@ -122,6 +122,32 @@ function validateCodexConfig(value: unknown): void {
   ) {
     throw invalid('codex.approvalPolicy is invalid');
   }
+  if (
+    value.reasoningSummary !== undefined &&
+    value.reasoningSummary !== 'auto' &&
+    value.reasoningSummary !== 'concise' &&
+    value.reasoningSummary !== 'detailed' &&
+    value.reasoningSummary !== 'none'
+  ) {
+    throw invalid('codex.reasoningSummary is invalid');
+  }
+  if (
+    value.reasoningEffort !== undefined &&
+    value.reasoningEffort !== 'low' &&
+    value.reasoningEffort !== 'medium' &&
+    value.reasoningEffort !== 'high'
+  ) {
+    throw invalid('codex.reasoningEffort is invalid');
+  }
+  if (
+    value.reasoningDisplay !== undefined &&
+    value.reasoningDisplay !== 'auto' &&
+    value.reasoningDisplay !== 'summary' &&
+    value.reasoningDisplay !== 'raw' &&
+    value.reasoningDisplay !== 'off'
+  ) {
+    throw invalid('codex.reasoningDisplay is invalid');
+  }
   if (value.permissions !== undefined) {
     assertNonEmptyString('codex.permissions', value.permissions);
   }

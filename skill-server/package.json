@@ -1,0 +1,27 @@
+{
+  "name": "@agentbox/skill-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AgentBox HTTP Skill Registry: upload, review, required policy, and package distribution.",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "main": "dist/server.js",
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "npm run build && node --test tests/*.test.cjs",
+    "verify": "npm run build && node --test tests/*.test.cjs",
+    "dev": "npm run build && node scripts/dev.cjs",
+    "seed": "npm run build && node scripts/seed.cjs",
+    "seed:local": "npm run build && node scripts/seed-local.cjs",
+    "dev:seed": "npm run build && node scripts/seed-local.cjs && node scripts/dev.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

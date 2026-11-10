@@ -225,6 +225,16 @@ export function getAgentMessageDelta(params: unknown): string | undefined {
   return isRecord(params) ? stringValue(params.delta) : undefined;
 }
 
+export function getReasoningSummaryDelta(
+  params: unknown
+): string | undefined {
+  return isRecord(params) ? stringValue(params.delta) : undefined;
+}
+
+export function getReasoningTextDelta(params: unknown): string | undefined {
+  return isRecord(params) ? stringValue(params.delta) : undefined;
+}
+
 export function getTurnId(params: unknown): string | undefined {
   return isRecord(params) ? stringValue(params.turnId) : undefined;
 }

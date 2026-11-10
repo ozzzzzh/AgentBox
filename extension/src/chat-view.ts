@@ -17,8 +17,21 @@ import {
   readDenyWritePatterns,
   readLoopDetectionOptions,
   readModelSettings,
+  readSkillGroups,
+  readSkillSettings,
+  requestSkillGroups,
+  secretKey,
+  skillServerTokenKey,
 } from './runtime-host';
 import { WebviewTurnUi } from './ui/webview-ui';
+import { buildSkillCatalog, type SkillCatalogItem } from './skills/catalog';
+import type { SkillUsage } from './skills/model';
+import {
+  buildMentionedSkillContext,
+  extractSkillMentions,
+  type MentionCandidate,
+} from './skills/mentions';
+import { readLocalSkills, readRemoteSkills, resolveLocalSkillsDir } from './skills/store';
 
 const IGNORED_WATCH_SEGMENTS = new Set([
   '.git',
@@ -56,6 +69,14 @@ function isIgnoredWatchPath(path: string): boolean {
 }
 
 const MAX_LOG_CHARS = 20_000;
+const MAX_REASONING_STORE_CHARS = 50_000;
+
+interface ToolDetail {
+  name: string;
+  args: unknown;
+  result: string;
+  ok: boolean | null;
+}
 
 interface ChatSession {
   id: string;
@@ -67,6 +88,13 @@ interface ChatSession {
   changedThisTurn: Set<string>;
   /** Session-scoped UI events, replayed into each webview surface. */
   events: SessionEvent[];
+  skillUsage?: SkillUsage[];
+  toolDetails: Map<string, ToolDetail>;
+  /** Current reasoning summary buffer; only the final text is persisted. */
+  reasoningBuffer: string;
+  reasoningPending: string;
+  reasoningKind?: 'summary' | 'raw';
+  reasoningTimer?: ReturnType<typeof setTimeout>;
 }
 
 interface ChatSurface {
@@ -226,6 +254,9 @@ export class ChatViewProvider
       title: '新会话',
       changedThisTurn: new Set<string>(),
       events: [],
+      toolDetails: new Map(),
+      reasoningBuffer: '',
+      reasoningPending: '',
     };
   }
 
@@ -244,6 +275,7 @@ export class ChatViewProvider
     this.post({ type: 'clear' });
     this.postSessions();
     this.postSessionLoad(this.activeSession);
+    this.postSkills();
     this.postState();
     this.postContext();
   }
@@ -298,18 +330,33 @@ export class ChatViewProvider
     this.post({ type: 'settings.open' });
   }
 
-  private readSettingsValues(): SettingsValues {
+  private async readSettingsValues(): Promise<SettingsValues> {
     const config = vscode.workspace.getConfiguration('agentbox');
+    const provider = config.get<string>('codex.provider', 'deepseek');
+    const apiKey = await this.context.secrets.get(secretKey(provider));
+    const skillToken = await this.context.secrets.get(skillServerTokenKey());
+    const skillSettings = readSkillSettings();
     return {
       runtime: config.get<string>('runtime', 'codex'),
       taskProfile: config.get<string>('taskProfile', 'code'),
-      provider: config.get<string>('codex.provider', 'deepseek'),
+      provider,
       model: config.get<string>('codex.model', 'deepseek-flash'),
       baseUrl: config.get<string>('codex.baseUrl', 'https://api.deepseek.com'),
       approvalPolicy: config.get<string>(
         'codex.approvalPolicy',
         'on-request'
       ),
+      reasoningEffort: config.get<string>('codex.reasoningEffort', 'medium'),
+      apiKeyConfigured:
+        apiKey !== undefined && apiKey.trim() !== '',
+      codexCommand: config.get<string>('codex.command', 'codex'),
+      extraInstructions: config.get<string>('codex.extraInstructions', ''),
+      skillServerUrl: skillSettings.serverUrl,
+      skillServerTokenConfigured:
+        skillToken !== undefined && skillToken.trim() !== '',
+      skillsAutoSync: skillSettings.autoSync,
+      skillsRequiredMissing: skillSettings.requiredMissing,
+      skillsLocalDir: skillSettings.localDir,
     };
   }
 
@@ -345,10 +392,39 @@ export class ChatViewProvider
       raw.approvalPolicy === 'never'
         ? raw.approvalPolicy
         : undefined;
+    const reasoningEffort =
+      raw.reasoningEffort === 'low' ||
+      raw.reasoningEffort === 'medium' ||
+      raw.reasoningEffort === 'high'
+        ? raw.reasoningEffort
+        : undefined;
+    const codexCommand =
+      typeof raw.codexCommand === 'string' && raw.codexCommand.trim() !== ''
+        ? raw.codexCommand.trim()
+        : 'codex';
+    const extraInstructions =
+      typeof raw.extraInstructions === 'string' ? raw.extraInstructions : '';
+    const skillServerUrl =
+      typeof raw.skillServerUrl === 'string'
+        ? raw.skillServerUrl.trim()
+        : '';
+    const skillsAutoSync = raw.skillsAutoSync === true;
+    const skillsRequiredMissing =
+      raw.skillsRequiredMissing === 'block' ? 'block' : 'warn';
+    const skillsLocalDir =
+      typeof raw.skillsLocalDir === 'string' ? raw.skillsLocalDir.trim() : '';
+    const apiKey = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : '';
+    const skillServerToken =
+      typeof raw.skillServerToken === 'string'
+        ? raw.skillServerToken.trim()
+        : '';
+    const clearApiKey = raw.clearApiKey === true;
+    const clearSkillServerToken = raw.clearSkillServerToken === true;
     if (
       runtime === undefined ||
       taskProfile === undefined ||
-      approvalPolicy === undefined
+      approvalPolicy === undefined ||
+      reasoningEffort === undefined
     ) {
       this.post({
         type: 'settings.error',
@@ -380,15 +456,37 @@ export class ChatViewProvider
     await config.update('codex.model', model, target);
     await config.update('codex.baseUrl', baseUrl, target);
     await config.update('codex.approvalPolicy', approvalPolicy, target);
+    await config.update('codex.reasoningEffort', reasoningEffort, target);
+    await config.update('codex.command', codexCommand, target);
+    await config.update('codex.extraInstructions', extraInstructions, target);
+    await config.update('skills.serverUrl', skillServerUrl, target);
+    await config.update('skills.autoSync', skillsAutoSync, target);
+    await config.update('skills.requiredMissing', skillsRequiredMissing, target);
+    await config.update('skills.localDir', skillsLocalDir, target);
+
+    if (clearApiKey) {
+      await this.context.secrets.delete(secretKey(provider));
+    } else if (apiKey !== '') {
+      await this.context.secrets.store(secretKey(provider), apiKey);
+    }
+    if (clearSkillServerToken) {
+      await this.context.secrets.delete(skillServerTokenKey());
+    } else if (skillServerToken !== '') {
+      await this.context.secrets.store(skillServerTokenKey(), skillServerToken);
+    }
 
     this.output.appendLine(
       `[config] runtime=${runtime} profile=${taskProfile} provider=${provider} ` +
-        `model=${model} approval=${approvalPolicy}`
+        `model=${model} approval=${approvalPolicy} effort=${reasoningEffort} ` +
+        `skills=${skillServerUrl === '' ? 'off' : skillServerUrl}`
     );
 
     this.refreshLabels();
     await this.reset();
-    this.post({ type: 'settings', values: this.readSettingsValues() });
+    this.post({
+      type: 'settings',
+      values: await this.readSettingsValues(),
+    });
     this.post({ type: 'settings.saved' });
     this.post({ type: 'log', text: '设置已保存，会话已重置。' });
   }
@@ -406,6 +504,13 @@ export class ChatViewProvider
     session.ui = undefined;
     session.root = undefined;
     session.changedThisTurn.clear();
+    if (session.reasoningTimer !== undefined) {
+      clearTimeout(session.reasoningTimer);
+      session.reasoningTimer = undefined;
+    }
+    session.reasoningBuffer = '';
+    session.reasoningPending = '';
+    session.reasoningKind = undefined;
   }
 
   private async disposeAllSessions(): Promise<void> {
@@ -458,6 +563,7 @@ export class ChatViewProvider
     session.ui = webviewUi;
     session.root = root;
     session.signature = bundle.signature;
+    session.skillUsage = bundle.skillUsage ?? [];
     if (bundle.projectInstructionsPath !== undefined) {
       this.output.appendLine(
         `[project] ${bundle.projectInstructionsPath}${
@@ -465,7 +571,18 @@ export class ChatViewProvider
         }`
       );
     }
+    for (const warning of bundle.skillWarnings ?? []) {
+      this.output.appendLine(`[skill] ${warning}`);
+    }
+    if ((bundle.skillUsage ?? []).length > 0) {
+      this.output.appendLine(
+        `[skill] injected: ${bundle.skillUsage!
+          .map((item) => `${item.id}@${item.version} (${item.source})`)
+          .join(', ')}`
+      );
+    }
     this.ensureWatcher(root);
+    this.postSkills(session);
     this.postSessions();
     this.postState();
     return next;
@@ -508,6 +625,111 @@ export class ChatViewProvider
     });
   }
 
+  private postSkills(session: ChatSession = this.activeSession): void {
+    this.post({ type: 'skills', skills: session.skillUsage ?? [] });
+  }
+
+  private postSkillsTo(
+    surface: ChatSurface,
+    session: ChatSession = this.activeSession
+  ): void {
+    surface.post({ type: 'skills', skills: session.skillUsage ?? [] });
+  }
+
+  private async postSkillGroups(): Promise<void> {
+    try {
+      this.post({
+        type: 'skills.groups',
+        groups: await readSkillGroups(this.context),
+      });
+    } catch (error) {
+      this.output.appendLine(
+        `[skill] group list failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  private readSkillCatalog(): SkillCatalogItem[] {
+    const settings = readSkillSettings();
+    const local = readLocalSkills(
+      resolveLocalSkillsDir(settings.localDir)
+    ).items.map((item) => item.skill);
+    const remote =
+      settings.serverUrl === ''
+        ? []
+        : readRemoteSkills(
+            this.context.globalStorageUri.fsPath,
+            settings.serverUrl
+          ).items.map((item) => ({
+            skill: item.skill,
+            required: item.required,
+            ...(item.groups === undefined ? {} : { groups: item.groups }),
+          }));
+    return buildSkillCatalog({
+      local,
+      remote,
+      enabledIds: settings.enabled,
+      disabledIds: settings.disabled,
+    });
+  }
+
+  private readSkillPackages(): MentionCandidate[] {
+    const settings = readSkillSettings();
+    const local = readLocalSkills(
+      resolveLocalSkillsDir(settings.localDir)
+    ).items.map<MentionCandidate>((item) => ({
+      skill: item.skill,
+      source: 'local',
+    }));
+    const remote =
+      settings.serverUrl === ''
+        ? []
+        : readRemoteSkills(
+            this.context.globalStorageUri.fsPath,
+            settings.serverUrl
+          ).items.map<MentionCandidate>((item) => ({
+            skill: item.skill,
+            source: 'remote',
+          }));
+    const byId = new Map<string, MentionCandidate>();
+    for (const item of [...remote, ...local]) {
+      if (!byId.has(item.skill.manifest.id)) {
+        byId.set(item.skill.manifest.id, item);
+      }
+    }
+    return [...byId.values()];
+  }
+
+  private async toggleSkill(id: string, enabled: boolean): Promise<void> {
+    const item = this.readSkillCatalog().find((entry) => entry.id === id);
+    if (item === undefined || item.required) return;
+    const settings = readSkillSettings();
+    const enabledIds = new Set(settings.enabled);
+    const disabledIds = new Set(settings.disabled);
+    if (enabled) {
+      enabledIds.add(id);
+      disabledIds.delete(id);
+    } else {
+      enabledIds.delete(id);
+      disabledIds.add(id);
+    }
+    const folders = vscode.workspace.workspaceFolders;
+    const target =
+      folders !== undefined && folders.length > 0
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+    const config = vscode.workspace.getConfiguration('agentbox');
+    await config.update('skills.enabled', [...enabledIds], target);
+    await config.update('skills.disabled', [...disabledIds], target);
+    this.post({ type: 'skills.catalog', items: this.readSkillCatalog() });
+    this.post({
+      type: 'log',
+      text: `skill ${id} 已${enabled ? '启用' : '停用'}，下一条 prompt 生效。`,
+    });
+  }
+
   private async handleMessage(
     surface: ChatSurface,
     raw: unknown
@@ -519,6 +741,12 @@ export class ChatViewProvider
         case 'ready':
           this.postSessionsTo(surface);
           this.postSessionLoadTo(surface, this.activeSession);
+          this.postSkillsTo(surface);
+          surface.post({
+            type: 'skills.catalog',
+            items: this.readSkillCatalog(),
+          });
+          void this.postSkillGroups();
           this.postState();
           this.postContext();
           if (this.pendingSettingsOpen) {
@@ -574,8 +802,41 @@ export class ChatViewProvider
             chatSession.title = truncateTitle(text);
             this.postSessions();
           }
-          const context = this.buildActiveContext(root, includeFile, includeSelection);
-          await controller.runTurn(text, context);
+          const mentionedIds = new Set(extractSkillMentions(text));
+          const mentioned = this.readSkillPackages().filter((candidate) =>
+            mentionedIds.has(candidate.skill.manifest.id)
+          );
+          const mentionContext =
+            mentionedIds.size > 0
+              ? buildMentionedSkillContext({
+                  skills: mentioned,
+                  alreadyInjected: chatSession.skillUsage ?? [],
+                })
+              : { text: '', usage: [], warnings: [] };
+          for (const warning of mentionContext.warnings) {
+            this.output.appendLine(`[skill] ${warning}`);
+          }
+          const contextParts = [
+            this.buildActiveContext(root, includeFile, includeSelection),
+            mentionContext.text,
+          ].filter(
+            (part): part is string =>
+              typeof part === 'string' && part.trim() !== ''
+          );
+          const context =
+            contextParts.length > 0 ? contextParts.join('\n\n') : undefined;
+          const metadataSkills = [
+            ...(chatSession.skillUsage ?? []),
+            ...mentionContext.usage,
+          ].filter(
+            (item, index, list) =>
+              list.findIndex((candidate) => candidate.id === item.id) === index
+          );
+          await controller.runTurn(
+            text,
+            context,
+            metadataSkills.length > 0 ? { skills: metadataSkills } : undefined
+          );
           return;
         }
 
@@ -596,6 +857,12 @@ export class ChatViewProvider
           }
           return;
 
+        case 'openToolDetails':
+          if (typeof raw.callId === 'string') {
+            await this.openToolDetails(this.activeSession, raw.callId);
+          }
+          return;
+
         case 'openExternal':
           if (
             typeof raw.url === 'string' &&
@@ -611,12 +878,77 @@ export class ChatViewProvider
 
         case 'settings.request':
           this.pendingSettingsOpen = false;
-          this.post({ type: 'settings', values: this.readSettingsValues() });
+          this.post({
+            type: 'settings',
+            values: await this.readSettingsValues(),
+          });
           return;
 
         case 'settings.save':
           await this.saveSettings(raw.values);
           return;
+
+        case 'skills.open':
+          this.post({
+            type: 'skills.catalog',
+            items: this.readSkillCatalog(),
+          });
+          return;
+
+        case 'skills.toggle':
+          if (typeof raw.id === 'string') {
+            await this.toggleSkill(raw.id, raw.enabled === true);
+          }
+          return;
+
+        case 'skills.create':
+          await vscode.commands.executeCommand('agentbox.createSkill');
+          this.post({ type: 'skills.catalog', items: this.readSkillCatalog() });
+          return;
+
+        case 'skills.openFolder':
+          await vscode.commands.executeCommand('agentbox.openSkillsFolder');
+          return;
+
+        case 'skills.upload':
+          await vscode.commands.executeCommand('agentbox.uploadSkill');
+          this.post({ type: 'skills.catalog', items: this.readSkillCatalog() });
+          return;
+
+        case 'skills.sync':
+          await vscode.commands.executeCommand('agentbox.syncSkills');
+          this.post({ type: 'skills.catalog', items: this.readSkillCatalog() });
+          await this.postSkillGroups();
+          return;
+
+        case 'skills.requestGroups':
+          await this.postSkillGroups();
+          return;
+
+        case 'skills.joinGroups': {
+          const ids = Array.isArray(raw.ids)
+            ? raw.ids.filter(
+                (item): item is string => typeof item === 'string' && item !== ''
+              )
+            : [];
+          if (ids.length === 0) return;
+          try {
+            const groups = await requestSkillGroups(this.context, ids);
+            this.post({ type: 'skills.groups', groups });
+            this.post({
+              type: 'log',
+              text: `已提交 ${ids.length} 个分组申请，等待 server admin 审批。`,
+            });
+          } catch (error) {
+            this.post({
+              type: 'log',
+              text: `分组申请失败：${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            });
+          }
+          return;
+        }
 
         case 'session.new':
           await this.newSession();
@@ -655,6 +987,7 @@ export class ChatViewProvider
     this.activeSessionId = session.id;
     this.postSessions();
     this.postSessionLoad(session);
+    this.postSkills(session);
     this.postState();
     this.postContext();
   }
@@ -670,6 +1003,7 @@ export class ChatViewProvider
     this.activeSessionId = id;
     this.postSessions();
     this.postSessionLoad(target);
+    this.postSkills(target);
     this.postState();
     this.postContext();
   }
@@ -694,6 +1028,7 @@ export class ChatViewProvider
     }
     this.postSessions();
     this.postSessionLoad(this.activeSession);
+    this.postSkills(this.activeSession);
     this.postState();
     this.postContext();
   }
@@ -784,10 +1119,38 @@ export class ChatViewProvider
    */
   private emit(session: ChatSession, message: SessionEvent): void {
     this.logEvent(message);
+
+    if (message.type === 'reasoning.delta') {
+      if (session.reasoningKind === undefined && message.kind !== undefined) {
+        session.reasoningKind = message.kind;
+      }
+      session.reasoningBuffer += message.text;
+      if (session.id === this.activeSessionId) {
+        session.reasoningPending += message.text;
+        this.scheduleReasoningFlush(session);
+      }
+      return;
+    }
+    if (message.type === 'reasoning.end') {
+      this.flushReasoning(
+        session,
+        message.text !== '' ? message.text : session.reasoningBuffer,
+        message.kind ?? session.reasoningKind
+      );
+      return;
+    }
+
     let outgoing: SessionEvent = message;
 
     if (message.type === 'turn.start') {
       session.changedThisTurn.clear();
+      session.reasoningBuffer = '';
+      session.reasoningPending = '';
+      session.reasoningKind = undefined;
+      if (session.reasoningTimer !== undefined) {
+        clearTimeout(session.reasoningTimer);
+        session.reasoningTimer = undefined;
+      }
     } else if (
       message.type === 'tool.start' &&
       message.name === 'fileChange' &&
@@ -809,11 +1172,85 @@ export class ChatViewProvider
       if (session.changedThisTurn.has(path)) return;
       session.changedThisTurn.add(path);
       outgoing = { ...message, path };
+    } else if (message.type === 'turn.end') {
+      if (session.reasoningBuffer !== '' || session.reasoningPending !== '') {
+        this.flushReasoning(
+          session,
+          session.reasoningBuffer,
+          session.reasoningKind
+        );
+      }
+    }
+
+    if (outgoing.type === 'tool.start') {
+      session.toolDetails.set(outgoing.callId, {
+        name: outgoing.name,
+        args: outgoing.args,
+        result: '',
+        ok: null,
+      });
+    } else if (outgoing.type === 'tool.end') {
+      const existing = session.toolDetails.get(outgoing.callId);
+      session.toolDetails.set(outgoing.callId, {
+        name: outgoing.name,
+        args: existing?.args ?? {},
+        result: outgoing.result,
+        ok: outgoing.ok,
+      });
     }
 
     session.events.push(outgoing);
     if (session.id === this.activeSessionId) {
       this.post(outgoing);
+    }
+  }
+
+  private scheduleReasoningFlush(session: ChatSession): void {
+    if (session.reasoningTimer !== undefined) return;
+    session.reasoningTimer = setTimeout(() => {
+      session.reasoningTimer = undefined;
+      const text = session.reasoningPending;
+      session.reasoningPending = '';
+      if (text !== '' && session.id === this.activeSessionId) {
+        this.post({ type: 'reasoning.delta', text });
+      }
+    }, 100);
+  }
+
+  private flushReasoning(
+    session: ChatSession,
+    finalText: string,
+    kind?: 'summary' | 'raw'
+  ): void {
+    if (session.reasoningTimer !== undefined) {
+      clearTimeout(session.reasoningTimer);
+      session.reasoningTimer = undefined;
+    }
+    const pending = session.reasoningPending;
+    session.reasoningPending = '';
+    if (pending !== '' && session.id === this.activeSessionId) {
+      this.post({
+        type: 'reasoning.delta',
+        text: pending,
+        ...(kind ? { kind } : {}),
+      });
+    }
+    const text = finalText.trim() === '' ? session.reasoningBuffer : finalText;
+    session.reasoningBuffer = '';
+    session.reasoningKind = undefined;
+    if (text.trim() === '') return;
+    const stored =
+      text.length <= MAX_REASONING_STORE_CHARS
+        ? text
+        : `${text.slice(0, MAX_REASONING_STORE_CHARS)}\n…（思考内容已截断）`;
+    const event: SessionEvent = {
+      type: 'reasoning.end',
+      text: stored,
+      ...(kind ? { kind } : {}),
+    };
+    session.events.push(event);
+    if (session.id === this.activeSessionId) {
+      this.post(event);
     }
   }
 
@@ -908,6 +1345,40 @@ export class ChatViewProvider
     }
   }
 
+  private async openToolDetails(
+    session: ChatSession,
+    callId: string
+  ): Promise<void> {
+    const detail = session.toolDetails.get(callId);
+    if (detail === undefined) {
+      this.showOutput();
+      return;
+    }
+    const commandTools = new Set([
+      'commandExecution',
+      'run_shell',
+      'shell',
+      'shellCommand',
+    ]);
+    const content = [
+      `# ${detail.name}`,
+      '',
+      `Status: ${detail.ok === null ? 'running' : detail.ok ? 'completed' : 'failed'}`,
+      '',
+      '## Arguments',
+      stringifyForLog(detail.args),
+      '',
+      '## Output',
+      detail.result === '' ? '(no output)' : detail.result,
+      '',
+    ].join('\n');
+    const document = await vscode.workspace.openTextDocument({
+      content,
+      language: commandTools.has(detail.name) ? 'shellscript' : 'plaintext',
+    });
+    await vscode.window.showTextDocument(document, { preview: true });
+  }
+
   private async openWorkspaceFile(path: string): Promise<void> {
     const root = this.currentRoot();
     if (root === undefined) {
@@ -967,6 +1438,7 @@ export class ChatViewProvider
       </div>
       <div class="meta"></div>
       <button id="open-editor" class="icon-button" title="在编辑器中打开（可拖动布局）" aria-label="在编辑器中打开">⧉</button>
+      <button id="skills" class="icon-button" title="技能" aria-label="技能">✦</button>
       <button id="settings" class="icon-button" title="设置" aria-label="设置">⚙</button>
     </header>
     <div class="session-row">
@@ -1003,6 +1475,7 @@ export class ChatViewProvider
     </section>
 
     <section class="composer">
+      <div id="skill-bar" class="skill-bar" hidden aria-label="已注入的 Skill"></div>
       <div id="context-bar" class="context-bar" hidden>
         <button id="toggle-file" class="context-toggle" type="button" aria-pressed="false" title="加入当前文件">
           <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -1018,7 +1491,10 @@ export class ChatViewProvider
           <span id="selection-label">选区</span>
         </button>
       </div>
-      <textarea id="input" rows="1" aria-label="消息输入框" placeholder="向 AgentBox 提问…（Enter 发送，Shift+Enter 换行）"></textarea>
+      <div class="composer-input-wrap">
+        <textarea id="input" rows="1" aria-label="消息输入框" placeholder="向 AgentBox 提问…（Enter 发送，Shift+Enter 换行；@ 引用 Skill）"></textarea>
+        <div id="mention-menu" class="mention-menu" role="listbox" aria-label="引用 Skill" hidden></div>
+      </div>
       <div class="composer-actions">
         <span id="status" class="status"></span>
         <button id="submit" class="submit-button" title="发送" aria-label="发送">
@@ -1038,51 +1514,153 @@ export class ChatViewProvider
         <span>设置</span>
         <button id="settings-close" class="icon-button" title="关闭设置" aria-label="关闭设置">✕</button>
       </div>
+      <div class="settings-main">
+      <div class="settings-tabs" role="tablist" aria-label="设置分类">
+        <button class="settings-tab active" type="button" data-settings-tab="model">
+          <svg class="settings-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3" width="11" height="8" rx="1.5"/><path d="M5 13h6M8 11v2"/></svg>
+          模型
+        </button>
+        <button class="settings-tab" type="button" data-settings-tab="skills">
+          <svg class="settings-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.5h6.5L13 6v6.5H4z"/><path d="M10 3.5V6h3M6 8.5h5M6 10.5h3"/></svg>
+          Skill
+        </button>
+        <button class="settings-tab" type="button" data-settings-tab="advanced">
+          <svg class="settings-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10"/><circle cx="6" cy="4.5" r="1.4"/><circle cx="10" cy="8" r="1.4"/><circle cx="7" cy="11.5" r="1.4"/></svg>
+          高级
+        </button>
+      </div>
       <div class="settings-body">
-        <label class="field">
-          <span>Runtime</span>
-          <select id="setting-runtime">
-            <option value="codex">codex</option>
-            <option value="fake">fake（UI 冒烟）</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>任务模式</span>
-          <select id="setting-task-profile">
-            <option value="simple">simple（静态文件，8 步 / 90s）</option>
-            <option value="code">code（常规编码，20 步 / 180s）</option>
-            <option value="research">research（研究/多步，30 步 / 300s）</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Provider</span>
-          <input id="setting-provider" type="text" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>模型</span>
-          <input id="setting-model" type="text" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>Base URL</span>
-          <input id="setting-base-url" type="text" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>审批策略</span>
-          <select id="setting-approval">
-            <option value="on-request">on-request（按需）</option>
-            <option value="untrusted">untrusted（每条命令询问）</option>
-            <option value="never">never（不询问）</option>
-          </select>
-        </label>
-        <p class="settings-hint">
-          审批策略：<b>untrusted</b> 每条命令都询问；<b>on-request</b> 仅在 Codex 请求时询问；
-          <b>never</b> 不询问。API Key 请使用命令面板 “AgentBox: Set API Key”，密钥不会进入 Webview。
-        </p>
+        <div class="settings-page" data-settings-page="model">
+          <label class="field">
+            <span>Runtime</span>
+            <select id="setting-runtime">
+              <option value="codex">codex</option>
+              <option value="fake">fake（UI 冒烟）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>任务模式</span>
+            <select id="setting-task-profile">
+              <option value="simple">simple（静态文件，8 步 / 90s）</option>
+              <option value="code">code（常规编码，20 步 / 180s）</option>
+              <option value="research">research（研究/多步，30 步 / 300s）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Provider</span>
+            <input id="setting-provider" type="text" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>模型</span>
+            <input id="setting-model" type="text" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Base URL</span>
+            <input id="setting-base-url" type="text" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>API Key</span>
+            <div class="field-inline">
+              <input id="setting-api-key" type="password" autocomplete="off" placeholder="留空表示不修改" />
+              <button id="clear-api-key" class="text-button" type="button">清除</button>
+            </div>
+          </label>
+          <label class="field">
+            <span>推理强度</span>
+            <select id="setting-reasoning-effort">
+              <option value="low">low（更快，思考更少）</option>
+              <option value="medium">medium（默认）</option>
+              <option value="high">high（更深入，更慢）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>审批策略</span>
+            <select id="setting-approval">
+              <option value="on-request">on-request（按需）</option>
+              <option value="untrusted">untrusted（每条命令询问）</option>
+              <option value="never">never（不询问）</option>
+            </select>
+          </label>
+          <p class="settings-hint">
+            审批策略：<b>untrusted</b> 每条命令都询问；<b>on-request</b> 仅在 Codex 请求时询问；
+            <b>never</b> 不询问。
+          </p>
+        </div>
+
+        <div class="settings-page" data-settings-page="skills" hidden>
+          <label class="field">
+            <span>Server URL</span>
+            <input id="setting-skill-server-url" type="text" autocomplete="off" placeholder="http://127.0.0.1:4770" />
+          </label>
+          <label class="field">
+            <span>Server Token</span>
+            <div class="field-inline">
+              <input id="setting-skill-server-token" type="password" autocomplete="off" placeholder="留空表示不修改" title="上传需要 author/admin token；本地 dev 用 dev-author 或 dev-admin" />
+              <button id="clear-skill-server-token" class="text-button" type="button">清除</button>
+            </div>
+          </label>
+          <label class="field checkbox-field">
+            <input id="setting-skills-auto-sync" type="checkbox" />
+            <span>启动时自动同步</span>
+          </label>
+          <label class="field">
+            <span>Required 缺失</span>
+            <select id="setting-skills-required-missing">
+              <option value="warn">warn（警告并继续）</option>
+              <option value="block">block（阻断本轮）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>本地 Skill 目录</span>
+            <input id="setting-skills-local-dir" type="text" autocomplete="off" placeholder="留空使用 ~/.agentbox/skills/local" />
+          </label>
+          <div class="settings-section">Skill Groups</div>
+          <div class="skill-group-picker-row">
+            <details id="skill-group-picker" class="multi-select">
+              <summary id="skill-group-summary">选择分组</summary>
+              <div id="settings-skill-groups" class="multi-select-menu"></div>
+            </details>
+            <button id="join-skill-groups" class="primary" type="button">申请加入</button>
+          </div>
+        </div>
+
+        <div class="settings-page" data-settings-page="advanced" hidden>
+          <label class="field">
+            <span>Codex 命令</span>
+            <input id="setting-codex-command" type="text" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>额外指令</span>
+            <textarea id="setting-extra-instructions" rows="4" placeholder="追加到 developer instructions"></textarea>
+          </label>
+        </div>
+
+      </div>
+      </div>
+      <div class="settings-footer">
         <p id="settings-error" class="settings-error" hidden></p>
         <div class="settings-actions">
           <button id="settings-cancel" class="secondary" type="button">取消</button>
           <button id="settings-save" class="primary" type="button">保存</button>
         </div>
+      </div>
+    </aside>
+
+    <div id="skills-scrim" class="skills-scrim" hidden></div>
+    <aside id="skills-panel" class="skills-panel" role="dialog" aria-modal="true" aria-label="Skill 选择" hidden>
+      <div class="skills-header">
+        <span>技能</span>
+        <button id="skills-close" class="icon-button" title="关闭技能面板" aria-label="关闭技能面板">✕</button>
+      </div>
+      <div class="skills-main">
+        <nav id="skills-nav" class="skills-nav" aria-label="Skill 分类"></nav>
+        <div id="skills-list" class="skills-list"></div>
+      </div>
+      <div class="skills-actions">
+        <button id="skills-create" class="secondary" type="button">新建</button>
+        <button id="skills-folder" class="secondary" type="button">打开目录</button>
+        <button id="skills-upload" class="secondary" type="button">上传</button>
+        <button id="skills-sync" class="secondary" type="button">同步远程</button>
       </div>
     </aside>
   </div>

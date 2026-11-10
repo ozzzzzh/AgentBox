@@ -43,6 +43,8 @@ export interface TurnUi {
   // keeps using appendEventLine(); the webview UI implements them to render
   // cards instead of plain log lines.
   turnStarted?(turnId: string): void;
+  reasoningDelta?(text: string, kind?: 'summary' | 'raw'): void;
+  reasoningEnded?(text: string, kind?: 'summary' | 'raw'): void;
   toolStarted?(callId: string, name: string, args: unknown): void;
   toolEnded?(callId: string, name: string, ok: boolean, result: string): void;
   fileChanged?(path: string): void;
@@ -103,7 +105,11 @@ export class RuntimeController {
     this.ui.setBusy(false);
   }
 
-  async runTurn(prompt: string, context?: string): Promise<TurnHandle | null> {
+  async runTurn(
+    prompt: string,
+    context?: string,
+    metadata?: Record<string, unknown>
+  ): Promise<TurnHandle | null> {
     if (!this.started) {
       this.ui.showError('AgentBox runtime is not started.');
       return null;
@@ -126,6 +132,7 @@ export class RuntimeController {
         workspaceRoot: this.workspaceRoot,
         ...(context !== undefined && context !== '' ? { context } : {}),
         ...(this.limits !== undefined ? { limits: this.limits } : {}),
+        ...(metadata !== undefined ? { metadata } : {}),
       });
     } catch (error) {
       this.ui.showError(toErrorMessage(error));
@@ -189,6 +196,14 @@ export class RuntimeController {
 
       case 'text.delta':
         this.ui.appendText(event.text);
+        break;
+
+      case 'reasoning.delta':
+        this.ui.reasoningDelta?.(event.text, event.kind);
+        break;
+
+      case 'reasoning.end':
+        this.ui.reasoningEnded?.(event.text, event.kind);
         break;
 
       case 'tool.start':
@@ -286,6 +301,7 @@ export class RuntimeController {
       this.ui.showError(toErrorMessage(error));
     });
   }
+
 
   private async handleApproval(
     event: Extract<AgentEvent, { type: 'approval.request' }>

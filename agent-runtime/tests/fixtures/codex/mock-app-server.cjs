@@ -35,7 +35,9 @@ function beginTurn(turnId, prompt, threadId) {
         ? 'approval'
         : prompt.includes('__failed_tool__')
           ? 'failed'
-          : 'normal';
+          : prompt.includes('__raw_reasoning__')
+            ? 'raw'
+            : 'normal';
 
   turns.set(turnId, { mode, threadId, prompt });
   notify('turn/started', {
@@ -57,6 +59,46 @@ function beginTurn(turnId, prompt, threadId) {
     process.exit(1);
   }
 
+  if (mode === 'raw') {
+    notify('item/reasoning/textDelta', {
+      threadId,
+      turnId,
+      itemId: 'reason_raw',
+      contentIndex: 0,
+      delta: 'raw thinking ',
+    });
+    notify('item/reasoning/textDelta', {
+      threadId,
+      turnId,
+      itemId: 'reason_raw',
+      contentIndex: 0,
+      delta: 'fallback',
+    });
+    notify('item/completed', {
+      threadId,
+      turnId,
+      completedAtMs: Date.now(),
+      item: {
+        type: 'reasoning',
+        id: 'reason_raw',
+        summary: [],
+        content: ['raw thinking fallback'],
+      },
+    });
+    notify('item/agentMessage/delta', {
+      threadId,
+      turnId,
+      itemId: 'item_agent',
+      delta: 'answer',
+    });
+    notify('turn/completed', {
+      threadId,
+      turn: { id: turnId, status: 'completed', error: null },
+    });
+    turns.delete(turnId);
+    return;
+  }
+
   if (mode === 'normal') {
     notify('item/started', {
       threadId,
@@ -67,6 +109,44 @@ function beginTurn(turnId, prompt, threadId) {
         id: 'item_user',
         clientId: null,
         content: [{ type: 'text', text: prompt, text_elements: [] }],
+      },
+    });
+    notify('item/reasoning/summaryTextDelta', {
+      threadId,
+      turnId,
+      itemId: 'reason_1',
+      summaryIndex: 0,
+      delta: 'checking ',
+    });
+    notify('item/reasoning/summaryTextDelta', {
+      threadId,
+      turnId,
+      itemId: 'reason_1',
+      summaryIndex: 0,
+      delta: 'files',
+    });
+    notify('item/reasoning/summaryPartAdded', {
+      threadId,
+      turnId,
+      itemId: 'reason_1',
+      summaryIndex: 1,
+    });
+    notify('item/reasoning/summaryTextDelta', {
+      threadId,
+      turnId,
+      itemId: 'reason_1',
+      summaryIndex: 1,
+      delta: 'then edit',
+    });
+    notify('item/completed', {
+      threadId,
+      turnId,
+      completedAtMs: Date.now(),
+      item: {
+        type: 'reasoning',
+        id: 'reason_1',
+        summary: ['checking files', 'then edit'],
+        content: [],
       },
     });
     notify('item/agentMessage/delta', {
