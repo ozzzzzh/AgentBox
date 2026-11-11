@@ -1,6 +1,6 @@
 # Agent Runtime 架构
 
-> 本文件描述本阶段（运行时层）的架构；知识/Skill/UI 在下一阶段接入。
+> 本文件描述**运行时层内部**架构；系统级（Skill/KB/部署）见根目录 [ARCHITECTURE.md](../../ARCHITECTURE.md)。
 > 详细任务见 [../IMPLEMENTATION_PLAN.md](../IMPLEMENTATION_PLAN.md)。
 
 ---
