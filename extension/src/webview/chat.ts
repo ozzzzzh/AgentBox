@@ -6,6 +6,7 @@ import type {
   SettingsValues,
   WebviewToHost,
 } from '../chat-protocol';
+import type { KnowledgeTurnInfo } from '../knowledge/types';
 import {
   TurnTimeline,
   type TimelineKind,
@@ -76,6 +77,25 @@ const settingSkillsRequiredMissing = byId<HTMLSelectElement>(
   'setting-skills-required-missing'
 );
 const settingSkillsLocalDir = byId<HTMLInputElement>('setting-skills-local-dir');
+const settingKnowledgeServerUrl = byId<HTMLInputElement>(
+  'setting-knowledge-server-url'
+);
+const settingKnowledgeServerToken = byId<HTMLInputElement>(
+  'setting-knowledge-server-token'
+);
+const clearKnowledgeServerTokenButton = byId<HTMLButtonElement>(
+  'clear-knowledge-server-token'
+);
+const settingKnowledgeAutoRetrieve = byId<HTMLInputElement>(
+  'setting-knowledge-auto-retrieve'
+);
+const settingKnowledgeTopK = byId<HTMLInputElement>('setting-knowledge-top-k');
+const settingKnowledgeMaxChars = byId<HTMLInputElement>(
+  'setting-knowledge-max-chars'
+);
+const knowledgeReindexButton = byId<HTMLButtonElement>('knowledge-reindex');
+const knowledgeSearchButton = byId<HTMLButtonElement>('knowledge-search');
+const knowledgeStatusButton = byId<HTMLButtonElement>('knowledge-status');
 const settingCodexCommand = byId<HTMLInputElement>('setting-codex-command');
 const settingExtraInstructions = byId<HTMLTextAreaElement>(
   'setting-extra-instructions'
@@ -92,6 +112,7 @@ const settingsPages = Array.from(
 );
 let clearApiKey = false;
 let clearSkillServerToken = false;
+let clearKnowledgeServerToken = false;
 
 interface SkillGroupInfo {
   id: string;
@@ -181,6 +202,8 @@ let currentAssistant: HTMLElement | null = null;
 let currentProcess: HTMLElement | null = null;
 let currentProcessSteps: HTMLElement | null = null;
 let currentBody: HTMLElement | null = null;
+let currentCitations: HTMLElement | null = null;
+let currentKnowledge: KnowledgeTurnInfo | null = null;
 let currentText = '';
 let currentReasoning: HTMLElement | null = null;
 let currentReasoningBody: HTMLElement | null = null;
@@ -835,7 +858,10 @@ function ensureAssistant(): HTMLElement {
 
     currentBody = document.createElement('div');
     currentBody.className = 'message-body markdown';
-    currentAssistant.append(meta, currentProcess, currentBody);
+    currentCitations = document.createElement('div');
+    currentCitations.className = 'knowledge-citations';
+    currentCitations.hidden = true;
+    currentAssistant.append(meta, currentProcess, currentBody, currentCitations);
     transcript.appendChild(currentAssistant);
     currentText = '';
   }
@@ -1012,6 +1038,36 @@ function pretty(value: unknown, maxChars = MAX_ARGS_CHARS): string {
   return text.length <= maxChars
     ? text
     : `${text.slice(0, maxChars)}\n…（共 ${text.length} 字符）`;
+}
+
+function renderKnowledgeCitations(
+  container: HTMLElement,
+  info: KnowledgeTurnInfo | null
+): void {
+  if (info === null || info.citations.length === 0) {
+    container.replaceChildren();
+    container.hidden = true;
+    return;
+  }
+  const chips: HTMLElement[] = [];
+  for (const citation of info.citations) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'citation-chip';
+    button.textContent = `[${citation.id}] ${citation.path}:${citation.startLine}`;
+    button.title = `${citation.heading || citation.path} · lines ${citation.startLine}-${citation.endLine}`;
+    button.addEventListener('click', () => {
+      post({
+        type: 'openFile',
+        path: citation.path,
+        line: citation.startLine,
+        endLine: citation.endLine,
+      });
+    });
+    chips.push(button);
+  }
+  container.replaceChildren(...chips);
+  container.hidden = false;
 }
 
 function addFileChip(parent: HTMLElement, path: string): void {
@@ -1579,6 +1635,8 @@ function clearTranscript(): void {
   currentProcess = null;
   currentProcessSteps = null;
   currentBody = null;
+  currentCitations = null;
+  currentKnowledge = null;
   currentText = '';
   toolCards.clear();
   approvalCards.clear();
@@ -1657,11 +1715,15 @@ function handleMessage(message: HostToWebview): void {
     case 'turn.start':
       resetReasoningState();
       turnTokens = null;
+      currentKnowledge = message.knowledge ?? null;
       renderTokenUsage();
       timeline.begin(Date.now());
       startTimelineClock();
       renderTimeline();
       ensureAssistant();
+      if (currentCitations !== null) {
+        renderKnowledgeCitations(currentCitations, currentKnowledge);
+      }
       showThinking();
       setBusy(true);
       return;
@@ -1783,6 +1845,8 @@ function handleMessage(message: HostToWebview): void {
       currentProcess = null;
       currentProcessSteps = null;
       currentBody = null;
+      currentCitations = null;
+      currentKnowledge = null;
       currentText = '';
       for (const [id, entry] of approvalCards) {
         if (entry.card.dataset.done !== '1') {
@@ -2107,15 +2171,28 @@ function applySettings(values: SettingsValues): void {
   settingSkillsAutoSync.checked = values.skillsAutoSync;
   settingSkillsRequiredMissing.value = values.skillsRequiredMissing;
   settingSkillsLocalDir.value = values.skillsLocalDir;
+  settingKnowledgeServerUrl.value = values.knowledgeServerUrl;
+  settingKnowledgeServerToken.value = '';
+  settingKnowledgeServerToken.placeholder =
+    values.knowledgeServerTokenConfigured
+      ? '已保存（留空不修改）'
+      : '未设置';
+  settingKnowledgeAutoRetrieve.checked = values.knowledgeAutoRetrieve;
+  settingKnowledgeTopK.value = String(values.knowledgeTopK);
+  settingKnowledgeMaxChars.value = String(values.knowledgeMaxChars);
   settingCodexCommand.value = values.codexCommand;
   settingExtraInstructions.value = values.extraInstructions;
   clearApiKey = false;
   clearSkillServerToken = false;
+  clearKnowledgeServerToken = false;
 }
 
 function saveSettings(): void {
   const apiKey = settingApiKey.value.trim();
   const skillToken = settingSkillServerToken.value.trim();
+  const knowledgeToken = settingKnowledgeServerToken.value.trim();
+  const topK = Number.parseInt(settingKnowledgeTopK.value, 10);
+  const maxChars = Number.parseInt(settingKnowledgeMaxChars.value, 10);
   const values: SettingsValues = {
     runtime: settingRuntime.value,
     taskProfile: settingTaskProfile.value,
@@ -2132,10 +2209,17 @@ function saveSettings(): void {
     skillsAutoSync: settingSkillsAutoSync.checked,
     skillsRequiredMissing: settingSkillsRequiredMissing.value,
     skillsLocalDir: settingSkillsLocalDir.value.trim(),
+    knowledgeServerUrl: settingKnowledgeServerUrl.value.trim(),
+    knowledgeServerTokenConfigured: false,
+    knowledgeAutoRetrieve: settingKnowledgeAutoRetrieve.checked,
+    knowledgeTopK: Number.isFinite(topK) ? topK : 5,
+    knowledgeMaxChars: Number.isFinite(maxChars) ? maxChars : 6000,
     ...(apiKey === '' ? {} : { apiKey }),
     ...(skillToken === '' ? {} : { skillServerToken: skillToken }),
+    ...(knowledgeToken === '' ? {} : { knowledgeServerToken: knowledgeToken }),
     ...(clearApiKey ? { clearApiKey: true } : {}),
     ...(clearSkillServerToken ? { clearSkillServerToken: true } : {}),
+    ...(clearKnowledgeServerToken ? { clearKnowledgeServerToken: true } : {}),
   };
   clearSettingsError();
   post({ type: 'settings.save', values });
@@ -2181,6 +2265,20 @@ clearSkillServerTokenButton.addEventListener('click', () => {
   clearSkillServerToken = true;
   settingSkillServerToken.value = '';
   settingSkillServerToken.placeholder = '保存后清除';
+});
+clearKnowledgeServerTokenButton.addEventListener('click', () => {
+  clearKnowledgeServerToken = true;
+  settingKnowledgeServerToken.value = '';
+  settingKnowledgeServerToken.placeholder = '保存后清除';
+});
+knowledgeReindexButton.addEventListener('click', () => {
+  post({ type: 'knowledge.reindex' });
+});
+knowledgeSearchButton.addEventListener('click', () => {
+  post({ type: 'knowledge.search' });
+});
+knowledgeStatusButton.addEventListener('click', () => {
+  post({ type: 'knowledge.status' });
 });
 for (const tab of settingsTabs) {
   tab.addEventListener('click', () => {

@@ -277,6 +277,9 @@ describe('ChatViewProvider', () => {
     expect(webview.html).toContain('id="submit"');
     expect(webview.html).toContain('id="setting-approval"');
     expect(webview.html).toContain('id="setting-skills-auto-sync"');
+    expect(webview.html).toContain('data-settings-tab="knowledge"');
+    expect(webview.html).toContain('id="setting-knowledge-server-url"');
+    expect(webview.html).toContain('id="knowledge-reindex"');
     expect(webview.html).not.toMatch(/src="https?:/i);
   });
 
@@ -442,6 +445,11 @@ describe('ChatViewProvider', () => {
         skillsAutoSync: true,
         skillsRequiredMissing: 'warn',
         skillsLocalDir: join(workspaceRoot, 'skills-local'),
+        knowledgeServerUrl: '',
+        knowledgeServerTokenConfigured: false,
+        knowledgeAutoRetrieve: true,
+        knowledgeTopK: 5,
+        knowledgeMaxChars: 6000,
       },
     });
   });
@@ -500,6 +508,11 @@ describe('ChatViewProvider', () => {
         skillsAutoSync: true,
         skillsRequiredMissing: 'block',
         skillsLocalDir: join(workspaceRoot, 'local-skills'),
+        knowledgeServerUrl: 'http://127.0.0.1:4771',
+        knowledgeServerToken: 'knowledge-token',
+        knowledgeAutoRetrieve: false,
+        knowledgeTopK: 7,
+        knowledgeMaxChars: 7000,
         codexCommand: 'codex-custom',
         extraInstructions: 'EXTRA_RULE',
       },
@@ -511,6 +524,15 @@ describe('ChatViewProvider', () => {
 
     expect(state.secrets.get('agentbox.apiKey.deepseek')).toBe('sk-test');
     expect(state.secrets.get('agentbox.skillServer.token')).toBe('server-token');
+    expect(state.secrets.get('agentbox.knowledgeServer.token')).toBe(
+      'knowledge-token'
+    );
+    expect(state.config.get('knowledge.serverUrl')).toBe(
+      'http://127.0.0.1:4771'
+    );
+    expect(state.config.get('knowledge.autoRetrieve')).toBe(false);
+    expect(state.config.get('knowledge.topK')).toBe(7);
+    expect(state.config.get('knowledge.maxChars')).toBe(7000);
     expect(state.config.get('skills.serverUrl')).toBe('http://127.0.0.1:4770');
     expect(state.config.get('skills.autoSync')).toBe(true);
     expect(state.config.get('skills.requiredMissing')).toBe('block');
@@ -541,6 +563,73 @@ describe('ChatViewProvider', () => {
       state.messages.some((message) => message.type === 'settings.error')
     );
     expect(state.config.get('runtime')).toBe('fake');
+  });
+
+  it('attaches knowledge citations to turn.start', async () => {
+    state.config.set('knowledge.serverUrl', 'http://127.0.0.1:4771');
+    state.config.set('knowledge.autoRetrieve', true);
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          apiVersion: 1,
+          mode: 'fts',
+          results: [
+            {
+              chunkId: 'c1',
+              docId: 'd1',
+              path: 'docs/etl.md',
+              title: 'ETL',
+              heading: '增量同步',
+              headingPath: 'ETL > 增量同步',
+              startLine: 3,
+              endLine: 5,
+              sensitivity: 'internal',
+              score: 1.2,
+              snippet: '增量同步',
+              text: '增量同步逻辑',
+              charCount: 8,
+              kind: 'markdown',
+            },
+          ],
+          truncated: false,
+          warnings: [],
+          latencyMs: 1,
+        }),
+        { status: 200 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      resolveView();
+      state.receiveHandler?.({
+        type: 'prompt',
+        text: '解释增量同步',
+        includeFile: false,
+        includeSelection: false,
+      });
+
+      await waitFor(() =>
+        state.messages.some(
+          (message) =>
+            message.type === 'turn.start' &&
+            (message.knowledge as { citations?: unknown[] } | undefined)
+              ?.citations?.length === 1
+        )
+      );
+      const event = state.messages.find(
+        (message) => message.type === 'turn.start'
+      ) as {
+        knowledge?: { citations: Array<{ id: string; path: string; startLine: number }> };
+      };
+      expect(event.knowledge?.citations[0]).toMatchObject({
+        id: 'K1',
+        path: 'docs/etl.md',
+        startLine: 3,
+      });
+      expect(fetchMock).toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('opens http(s) links through the extension host', async () => {

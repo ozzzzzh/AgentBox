@@ -5,7 +5,7 @@
 > Markdown 分级渲染（标题/列表/表格）、代码块一键复制；
 > 用户消息右对齐、助手回复左对齐，带角色标签与分隔线。
 > 头部不显示 runtime/model；点击右上角 **⚙** 或执行 **AgentBox: Settings**
-> 打开内嵌设置浮层（模型 / Skill / 高级三个 Tab），不离开对话。
+> 打开内嵌设置浮层（模型 / Skill / 知识 / 高级四个 Tab），不离开对话。
 > 输入框自动增高，发送与取消合并为右侧同一个图标按钮。
 > 输入框上方固定显示活动时间线（思考 / 生成 / 工具三条泳道，失败工具变红，可折叠）。
 > 顶部会话标签栏支持多会话：新建、切换、长按关闭；每个会话保留独立上下文和 transcript。
@@ -41,7 +41,7 @@
 cd extension
 npm install
 npm run build      # 构建 runtime + typecheck + esbuild（extension + webview）
-npm test           # 95 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / bundle）
+npm test           # 107 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / knowledge-* / bundle）
 npm run verify
 ```
 
@@ -49,13 +49,13 @@ npm run verify
 
 ```powershell
 npm run package
-# 产物：extension/agentbox-0.3.0.vsix
+# 产物：extension/agentbox-0.4.0.vsix
 ```
 
 安装：
 
 ```powershell
-code --install-extension agentbox-0.3.0.vsix
+code --install-extension agentbox-0.4.0.vsix
 ```
 
 ---
@@ -90,6 +90,12 @@ code --install-extension agentbox-0.3.0.vsix
 | `agentbox.skills.serverUrl` | 空（HTTP Skill Registry） |
 | `agentbox.skills.autoSync` | `true` |
 | `agentbox.skills.requiredMissing` | `warn`（可选 `block`） |
+| `agentbox.knowledge.serverUrl` | 空 = 关闭知识检索 |
+| `agentbox.knowledge.autoRetrieve` | `true`（Server URL 为空时不生效） |
+| `agentbox.knowledge.topK` | `5` |
+| `agentbox.knowledge.maxChars` | `6000` |
+| `agentbox.knowledge.collection` | 空 = 从 workspace 根目录派生 |
+| `agentbox.knowledge.maxFileBytes` | `1048576` |
 | `agentbox.codex.home` | 空 = 扩展 global storage |
 | `agentbox.envFile` | 空 |
 | `agentbox.limits.turnTimeoutMs` | 可选覆盖；空 = 使用任务 profile |
@@ -327,6 +333,56 @@ npm run dev:seed
 
 **Skill Registry**：实现和使用见仓库根目录的 `skill-server/README.md`。
 
+### 3.10 知识库（Knowledge）
+
+Knowledge Base 把 workspace 文档切成 chunk，存入独立 `knowledge-server/`
+（Node 24 + SQLite FTS5），每轮按 prompt 检索 top-k 后注入 `<knowledge>` 参考上下文；
+不会写入 `developerInstructions`，也不会覆盖 Skill/项目指令。
+
+**本地启动**：
+
+```powershell
+cd knowledge-server
+npm install
+npm run dev
+# http://127.0.0.1:4771，dev token：dev-reader / dev-author / dev-admin
+```
+
+扩展设置 → **知识**：
+
+- Server URL：`http://127.0.0.1:4771`；留空 = 关闭知识检索；
+- Server Token：只写入 SecretStorage；本地 loopback dev 可匿名读取；
+- 每轮自动检索：默认开启，但 Server URL 为空时不生效；
+- Top K / 最大字符：默认 5 / 6000；
+- **重建索引 / 搜索 / 状态** 按钮直接在设置页执行。
+
+命令：
+
+- `AgentBox: Reindex Knowledge`：扫描 workspace（跳过 `.git`、`node_modules`、
+  `dist`、`.probe`、密钥文件、二进制、>1MB 文件），只上传新增/变化文档，
+  并清理服务端已删除路径；
+- `AgentBox: Search Knowledge`：搜索并打开命中文件行；
+- `AgentBox: Knowledge Status`：文档/chunk/最后索引时间；
+- `AgentBox: Set Knowledge Server Token`：SecretStorage。
+
+注入顺序：
+
+```text
+mention skill
+  > knowledge (<knowledge>，参考数据，不是指令)
+  > 当前文件/选区
+  > 用户 prompt
+```
+
+回答下方显示 `[K1] path:line` 引用 chips，点击打开并定位到源文件行。
+知识服务不可达时只显示 warning，turn 继续。
+
+> 索引会把 workspace 内容发送到 knowledge server；远程 server 也会看到用户 prompt。
+> `http://` 只允许 localhost，非 loopback 必须 HTTPS + token。当前 MVP 没有
+> per-collection ACL，不要直接暴露给不受信任的团队。
+
+完整 API/schema 见 `knowledge-server/docs/CONTRACT.md`。
+
 ---
 
 ## 4. 使用聊天
@@ -360,7 +416,7 @@ npm run dev:seed
 
 ### 4.1 设置浮层
 
-⚙ 会弹出固定高度的设置浮层，左侧为竖向分类菜单（模型 / Skill / 高级），右侧内容独立滚动；修改后点击 **保存**：
+⚙ 会弹出固定高度的设置浮层，左侧为竖向分类菜单（模型 / Skill / 知识 / 高级），右侧内容独立滚动；修改后点击 **保存**：
 
 - Runtime：`codex` / `fake`
 - 任务模式：`simple` / `code` / `research`
@@ -368,11 +424,12 @@ npm run dev:seed
 - 推理强度：`low` / `medium` / `high`
 - 审批策略：`on-request` / `untrusted` / `never`
 - Skill Server：URL / Token / 自动同步 / required 缺失策略 / 本地目录
+- 知识：Server URL / Token / 自动检索 / Top K / 最大字符 / 重建索引 / 搜索 / 状态
 - Advanced：Codex 命令 / 额外指令
 
 保存会写入工作区设置并重置当前会话。
 
-- **API Key** / **Server Token** 只写入 SecretStorage，不会回传到 Webview；
+- **API Key** / **Skill Server Token** / **Knowledge Server Token** 只写入 SecretStorage，不会回传到 Webview；
 - 留空表示保持已保存的值；点 **清除** 后保存会删除；
 - 旧命令 `AgentBox: Set API Key` / `AgentBox: Set Skill Server Token` 仍保留为兼容入口。
 
@@ -445,6 +502,11 @@ assistant 消息按时间顺序显示 **处理过程**：思考、工具、中�
 | `AgentBox: Sync Remote Skills` | 同步 approved/required 远程 Skill |
 | `AgentBox: Set Skill Server Token` | 存 Skill Registry token 到 SecretStorage |
 | `AgentBox: Skill Settings` | 打开 Skill 相关设置 |
+| `AgentBox: Reindex Knowledge` | 扫描 workspace 并增量推送到 knowledge server |
+| `AgentBox: Search Knowledge` | 搜索知识库并打开命中文件行 |
+| `AgentBox: Knowledge Status` | 查看文档/chunk/最后索引时间 |
+| `AgentBox: Set Knowledge Server Token` | 存 Knowledge token 到 SecretStorage |
+| `AgentBox: Knowledge Settings` | 打开设置浮层（知识页） |
 | `AgentBox: Run Turn` | 降级入口：OutputChannel + 模态审批 |
 | `AgentBox: Cancel Turn` | 取消侧边栏或降级入口中的活动 turn |
 | `AgentBox: Show Output` | 打开 `AgentBox Chat` 日志通道（完整 tool 明细） |
@@ -482,6 +544,11 @@ assistant 消息按时间顺序显示 **处理过程**：思考、工具、中�
 - 项目指令只读取 workspace 根目录，不支持嵌套 `AGENTS.md`。
 - Skill 的 on-demand 触发（路径/关键词）尚未实现；目前按 `activation=always` 或 `skills.enabled` 注入。
 - 远程 Skill 在扩展激活/手动同步时拉取；同步后需要下一条 prompt 才重建会话并生效。
+- Knowledge 索引是手动/命令触发的，不做文件 watcher；修改文档后需重新 Reindex。
+- 引用行号是索引时快照；文件变化后可能 stale，点击时会提示文件缺失或行号越界。
+- Knowledge server 当前没有 per-collection ACL；`collection` + token role 只做命名空间隔离。
+- 中文 1–2 字查询走 `instr` fallback，召回/排序弱于 trigram；后续可加 jieba/embedding。
+- Knowledge 自动检索会把 prompt 和文件上下文摘要发给 server；远程部署前需评估隐私边界。
 - Skill Registry MVP 使用静态 token + 文件系统存储；生产应换 OIDC、TLS、备份和审计轮转。
 - 文件策略只在审批阶段生效；不请求审批的命令无法被拦截，仍需沙箱/ACL 做硬限制。
 - 循环检测只基于工具失败；不检测“成功但低效”的重复调用。

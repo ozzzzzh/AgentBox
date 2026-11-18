@@ -2,7 +2,7 @@
   "name": "agentbox-vscode",
   "displayName": "AgentBox",
   "description": "AgentBox: Codex app-server runtime with a multi-session webview chat sidebar, inline approvals, and file context.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "agentbox",
   "private": true,
   "license": "Apache-2.0",
@@ -18,7 +18,11 @@
     "onStartupFinished",
     "onView:agentbox.chat",
     "onCommand:agentbox.openInEditor",
-    "onCommand:agentbox.openChat"
+    "onCommand:agentbox.openChat",
+    "onCommand:agentbox.reindexKnowledge",
+    "onCommand:agentbox.searchKnowledge",
+    "onCommand:agentbox.knowledgeStatus",
+    "onCommand:agentbox.setKnowledgeServerToken"
   ],
   "contributes": {
     "viewsContainers": {
@@ -62,6 +66,16 @@
           "command": "agentbox.syncSkills",
           "when": "view == agentbox.chat",
           "group": "navigation@4"
+        },
+        {
+          "command": "agentbox.searchKnowledge",
+          "when": "view == agentbox.chat",
+          "group": "navigation@5"
+        },
+        {
+          "command": "agentbox.reindexKnowledge",
+          "when": "view == agentbox.chat",
+          "group": "navigation@6"
         }
       ]
     },
@@ -125,6 +139,35 @@
       {
         "command": "agentbox.skillSettings",
         "title": "AgentBox: Skill Settings",
+        "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.reindexKnowledge",
+        "title": "AgentBox: Reindex Knowledge",
+        "category": "AgentBox",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "agentbox.searchKnowledge",
+        "title": "AgentBox: Search Knowledge",
+        "category": "AgentBox",
+        "icon": "$(search)"
+      },
+      {
+        "command": "agentbox.knowledgeStatus",
+        "title": "AgentBox: Knowledge Status",
+        "category": "AgentBox",
+        "icon": "$(info)"
+      },
+      {
+        "command": "agentbox.setKnowledgeServerToken",
+        "title": "AgentBox: Set Knowledge Server Token",
+        "category": "AgentBox",
+        "icon": "$(key)"
+      },
+      {
+        "command": "agentbox.knowledgeSettings",
+        "title": "AgentBox: Knowledge Settings",
         "category": "AgentBox"
       },
       {
@@ -355,6 +398,41 @@
           "default": "warn",
           "markdownDescription": "Behavior when the remote skill cache has not been synced: warn and continue, or block turn startup."
         },
+        "agentbox.knowledge.serverUrl": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Knowledge server base URL, e.g. `http://127.0.0.1:4771` or `https://knowledge.example.internal`. Empty = knowledge retrieval is off. Plain HTTP is only allowed for localhost."
+        },
+        "agentbox.knowledge.autoRetrieve": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Retrieve top-k knowledge chunks for each prompt. Has no effect when `serverUrl` is empty."
+        },
+        "agentbox.knowledge.topK": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Maximum number of knowledge chunks to retrieve per turn."
+        },
+        "agentbox.knowledge.maxChars": {
+          "type": "number",
+          "default": 6000,
+          "minimum": 1000,
+          "maximum": 20000,
+          "description": "Character budget for the injected <knowledge> block."
+        },
+        "agentbox.knowledge.collection": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional collection id. Empty = derive `ws_<hash>` from the workspace root."
+        },
+        "agentbox.knowledge.maxFileBytes": {
+          "type": "number",
+          "default": 1048576,
+          "minimum": 1024,
+          "description": "Skip workspace files larger than this when reindexing."
+        },
         "agentbox.envFile": {
           "type": "string",
           "default": "",
@@ -374,7 +452,7 @@
     "build": "npm run build:runtime && npm run typecheck && node esbuild.mjs",
     "test": "vitest run",
     "verify": "npm run build && npm test",
-    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository -o agentbox-0.3.0.vsix"
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository -o agentbox-0.4.0.vsix"
   },
   "dependencies": {
     "@agentbox/runtime": "file:../agent-runtime",

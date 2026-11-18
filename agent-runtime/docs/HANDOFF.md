@@ -160,7 +160,11 @@ VS Code 集成在下一阶段通过消费者/adapter 完成。
 | `docs/COMPATIBILITY.md` | ✅ Codex/OpenCode/Node/VS Code/provider 兼容矩阵 |
 | `docs/SKILL-SYSTEM.md` | ✅ Skill 系统方案 + group/membership |
 | `docs/SKILL-VERIFICATION.md` | ✅ Skill Server/required/group 验证矩阵 |
-| `docs/KNOWLEDGE-BASE.md` | ✅ Knowledge Base 设计；下一步 KB-0/KB-1 |
+| `docs/KNOWLEDGE-BASE.md` | ✅ Knowledge Base 设计；KB-0/KB-1 已实现 |
+| `../../knowledge-server/` | ✅ KB-0/KB-1：Node 24 + node:sqlite FTS5、API/auth/audit |
+| `../../knowledge-server/docs/CONTRACT.md` | ✅ Knowledge API/schema/chunk 契约 |
+| `../../extension/src/knowledge/*` | ✅ KnowledgeClient / scanner / formatter / settings |
+| `../../extension/src/knowledge-commands.ts` | ✅ Reindex/Search/Status/Token 命令 |
 | `../ARCHITECTURE.md` | ✅ 系统级架构（客户端 / runtime / skill / KB / 部署） |
 | `docs/RUNTIME-PROBE.md` | ✅ P0 报告；DeepSeek 双 runtime E2E、Codex Windows sandbox、10 条 eval 已完成 |
 | `.probe/tools` | ✅ codex-cli 0.165.0 + opencode 1.19.4（gitignored，不提交） |
@@ -202,7 +206,8 @@ VS Code 集成在下一阶段通过消费者/adapter 完成。
 | `extension/src/chat-view.ts` / `chat-protocol.ts` / `ui/webview-ui.ts` | ✅ **UI-1**：侧栏宿主、消息协议、结构化 TurnUi |
 | `extension/src/context.ts` / `webview/chat.ts` / `webview/timeline.ts` / `media/chat.css` | ✅ **UI-1**：上下文拼接、vanilla 前端、活动时间线模型、主题样式 |
 | `extension/src/skills/*` / `skill-commands.ts` / `../../skill-server/` | ✅ **Skill S1–S6**：本地/远程 skill、包校验/hash、Registry、审批/required、同步、注入、命令/UI |
-| `../../extension/agentbox-0.3.0.vsix` | ✅ 123.04 KB（9 files），隔离 `--extensions-dir` 安装成功 |
+| `../../extension/agentbox-0.3.0.vsix` | ✅ 123.04 KB（9 files），UI-1 历史产物 |
+| `../../extension/agentbox-0.4.0.vsix` | ✅ 132.95 KB（9 files），KB-0/KB-1 版本；隔离安装成功 |
 | `npm run verify`（runtime） | ✅ 142 个测试通过（含 CLI 15、eval 9） |
 | `npm run verify`（extension） | ✅ 95 个测试通过（controller 11、settings 8、chat-view 19、timeline 5、context 5、webview-ui 6、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、skills-model 4、skills-store 5、skills-injection 5、skills-catalog 2、skills-mentions 3、skills-client 5、bundle 1） |
 | `npm test`（skill-server） | ✅ 9 个测试通过（Node test runner） |
@@ -271,7 +276,7 @@ P0 当前结论：
 7. **M7 / M11**（暂缓）：OpenCode adapter / Runtime 解耦 / srt；
    见 §10 PENDING-1。先完成 Skill Server 与 KB，再回来处理。
 8. **Knowledge Base**：设计见 [KNOWLEDGE-BASE.md](KNOWLEDGE-BASE.md)；
-   下一步 KB-0/KB-1（接口 + knowledge-server + FTS5）。
+   KB-0/KB-1 已完成；下一步 KB-4（评估/ACL/云端）或 PENDING-2。
 9. **内网 Qwen/Qwen3-Coder**：生产部署前确认。
 
 ---
@@ -415,15 +420,25 @@ UI 消费者继续只依赖 createRuntime + AgentEvent，不修改 adapter。
     - admin 管理页“分组”里审批；
     - 只有 approved group 的 skill 对客户端可见；
     - 未分组 skill 对所有客户端可见。
-  - 设置 UI：模型 / Skill / 高级竖向菜单；固定高度；底部固定保存/取消；
+  - 设置 UI：模型 / Skill / 知识 / 高级竖向菜单；固定高度；底部固定保存/取消；
     Skill Groups 多选下拉；skill 抽屉左侧分类菜单（全部/本地/服务器组）。
   - 本地上传 token fallback：loopback 未设置 token 时尝试 `dev-admin`。
+- **Knowledge Base（KB-0/KB-1，2026-11-12）**：
+  - 独立 `knowledge-server/`：Node 24 内置 `node:sqlite` + FTS5 trigram，无 native 依赖；
+  - API：status/collections/documents upsert/delete/search/reindex/maintenance/audit；
+  - collection 命名空间、content hash 去重、redaction、secret 跳过、removedPaths；
+  - 中文 2 字 `instr` fallback、FTS 触发器、VACUUM/rowid 回归测试；
+  - extension：`KnowledgeClient`、workspace scanner、`<knowledge>` formatter、
+    Reindex/Search/Status/Token 命令、设置页「知识」Tab、引用 chips；
+  - `TurnInput.context` 顺序：mention skill → knowledge → 当前文件/选区；
+  - server 不可达时只 warning，不阻塞 turn。
 - **测试/产物**：
   - runtime：142 passed
-  - extension：95 passed / 1 skipped
+  - extension：107 passed / 1 skipped（新增 knowledge client/scanner/formatter、
+    chat-view knowledge citation）
+  - knowledge-server：19 passed
   - skill-server：9 passed
-  - 总计：246
-  - VSIX：`extension/agentbox-0.3.0.vsix` 123.04 KB（9 files），隔离安装通过。
+  - VSIX：`extension/agentbox-0.4.0.vsix` 132.95 KB（9 files），隔离 `--extensions-dir` 安装成功。
 
 ### 11.2 Skill 剩余项
 
@@ -432,27 +447,41 @@ UI 消费者继续只依赖 createRuntime + AgentEvent，不修改 adapter。
 
 如果 Knowledge Base 要复用 skill group ACL，则优先补 `target` 过滤；否则先做 KB。
 
-### 11.3 下一步：Knowledge Base
+### 11.3 Knowledge Base（KB-0/KB-1 已完成）
 
 设计文档：[KNOWLEDGE-BASE.md](KNOWLEDGE-BASE.md)。
 
 已收敛的 MVP 决策：
 
 - 独立 `knowledge-server/`（Node 24），不与 skill-server 混进程；
-- server-side SQLite FTS5（中文先用 trigram + LIKE fallback）；
+- server-side SQLite FTS5（中文先用 trigram + `instr` fallback）；
 - extension 扫描 workspace → push documents 到 server；
 - 检索结果以 `<knowledge>` + `[K1] path:line` 引用注入；
 - Knowledge 属于 Context Assembler，不进入 `AgentRuntime`；
 - MVP 不做 embedding/连接器/复杂 rerank；
 - 本地/云端同一 HTTP API，云端再加 TLS/collection ACL。
 
-下一步先做 **KB-0/KB-1**：
+**KB-0/KB-1 已完成（2026-11-12）**：
 
-1. 定义 API/schema/chunk contract；
-2. 搭 `knowledge-server/` 骨架（auth/audit/status）；
-3. SQLite FTS5 upsert/search；
-4. extension KnowledgeClient + Reindex 命令；
-5. 再接 ContextAssembler 和引用 UI。
+1. ✅ API/schema/chunk contract：`knowledge-server/docs/CONTRACT.md`；
+2. ✅ `knowledge-server/`（auth/audit/status）；
+3. ✅ SQLite FTS5 upsert/search；
+4. ✅ extension KnowledgeClient + Reindex/Search/Status/Token；
+5. ✅ ContextAssembler `<knowledge>` + 引用 chips。
+
+下一步：KB-4 评估集/ACL/云端部署；或按 PENDING-2 做 Skill hardening。
+
+本地 Knowledge server：
+
+```powershell
+cd knowledge-server
+npm run dev
+# http://127.0.0.1:4771
+# dev-reader / dev-author / dev-admin
+```
+
+扩展设置 → 知识 → Server URL 填 `http://127.0.0.1:4771`，执行
+`AgentBox: Reindex Knowledge`；远程部署必须 HTTPS + token。
 
 ### 11.4 常用命令
 
@@ -464,11 +493,12 @@ npm run dev:seed
 # 测试
 cd agent-runtime; npm run verify
 cd skill-server; npm test
+cd knowledge-server; npm run verify
 cd extension; npm run verify
 
 # 打包
 cd extension; npm run package
-# 产物：extension/agentbox-0.3.0.vsix
+# 产物：extension/agentbox-0.4.0.vsix
 ```
 
 Skill Server 本地 dev：
@@ -477,6 +507,16 @@ Skill Server 本地 dev：
 http://127.0.0.1:4770/admin
 token: dev-admin（auto-login）
 extension 本地 loopback 可匿名读取
+```
+
+Knowledge Server 本地 dev：
+
+```powershell
+cd knowledge-server
+npm run dev
+# http://127.0.0.1:4771
+# dev-reader / dev-author / dev-admin
+# 扩展设置 → 知识 → Server URL 填 http://127.0.0.1:4771
 ```
 
 ### 11.5 约束（继续遵守）
@@ -505,20 +545,22 @@ extension 本地 loopback 可匿名读取
 - Skill 链路已经完成并验证：本地/远程、上传审批、required/enabled、groups、
   客户端 group join 审批、settings/skill UI。
 - Skill 剩余项在 PENDING-2，非阻塞，暂缓；不要重做 skill。
-- 最近提交 22676b6；当前只有 HANDOFF 有未提交修改。
+- KB-0/KB-1 已完成：knowledge-server、extension client/命令/注入/引用；
+  产物 `extension/agentbox-0.4.0.vsix`。
+- 最近提交 22676b6；工作树包含 KB-0/KB-1 未提交修改。
 
-下一步：开始 Knowledge Base KB-0/KB-1，不要先动 runtime。
-1. 读 KNOWLEDGE-BASE.md，确认/写 API/schema/chunk contract；
-2. 创建 knowledge-server/（Node 24 + SQLite FTS5，auth/audit/status）；
-3. 实现 workspace document upsert + FTS5 search；
-4. 加 extension KnowledgeClient + Reindex/Search 命令；
-5. 再接 ContextAssembler 的 <knowledge> 注入和引用 UI。
+当前：KB-0/KB-1 已完成（knowledge-server + extension client/命令/注入/引用）。
+下一步：KB-4（评估集、ACL、云端部署）或 PENDING-2 Skill hardening。
+1. 先读 knowledge-server/docs/CONTRACT.md；
+2. 本地 `cd knowledge-server; npm run dev`，扩展设置 → 知识填 4771；
+3. 执行 Reindex/Search，验证 `<knowledge>` 注入与引用 chips；
+4. 不要先动 runtime；不改 pluginVersion/。
 
 约束：
 - 不改 pluginVersion/；agent-runtime 不 import vscode；
 - 默认 localhost/内网，无外网；token 只进 SecretStorage；
 - KB 只做 top-k 上下文，不塞 developerInstructions；
 - 先写接口和测试，再实现；每阶段更新 docs。
-- 验证：runtime verify、skill-server test、extension verify/package。
+- 验证：runtime verify、skill-server test、knowledge-server verify、extension verify/package。
 ```
 

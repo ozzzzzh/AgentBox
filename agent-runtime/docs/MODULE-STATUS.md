@@ -4,7 +4,7 @@
 > 模块规格、边界与验收标准见 [MODULES.md](MODULES.md)。
 >
 > 状态：⬜ 未开始 · 🚧 进行中 · ✅ 已完成 · ⛔ 阻塞
-> 最后更新：2026-10-31
+> 最后更新：2026-11-12
 
 ---
 
@@ -36,11 +36,13 @@
 | **SK-1..S6** Skill 系统 MVP | ✅ | 2026-11-02 | [SKILL-SYSTEM.md](SKILL-SYSTEM.md)、`extension/src/skills/*`、`skill-server/` | 95 + 9 | 本地/远程 skill、HTTP Registry、审批、required、同步、注入、技能抽屉/@ 主动调用通过 |
 | **PERF-1** Turn 超时/推理强度 | ✅ | 2026-11-05 | [PERFORMANCE.md](PERFORMANCE.md)、controller/runtime | 94 | 超时 turn/interrupt、reasoning effort medium、reasoning display auto/raw、提示词硬化 |
 | **M11** Runtime 解耦 / bash-capable runtime | ⬜ 暂缓 | — | [HANDOFF.md](HANDOFF.md) §10 PENDING-1 | — | Codex 已回退 PowerShell（2026-11-06）；先完成 Skill Server/KB；当前保持 `AgentRuntime`/`AgentEvent` 契约纪律 |
+| **KB-0/KB-1** Knowledge Base | ✅ | 2026-11-12 | `knowledge-server/`、[CONTRACT.md](../../knowledge-server/docs/CONTRACT.md)、`extension/src/knowledge/*`、`agentbox-0.4.0.vsix` | 19 + 107 | FTS5/trigram、upsert/search、redaction/secret、ContextAssembler、引用 chips、server-down 降级 |
 
-**当前累计**：246 个测试通过（默认套件）。
+**当前累计**：277 个测试通过（默认套件）。
 
 - `agent-runtime`：142 个测试 / 14 个文件（含 CLI 15、eval 9）
-- `extension`：95 个测试 / 18 个文件（controller 11、settings 8、chat-view 19、timeline 5、context 5、webview-ui 6、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、skills-model 4、skills-store 5、skills-injection 5、skills-catalog 2、skills-mentions 3、skills-client 5、bundle 1）
+- `extension`：107 个测试 / 21 个文件（controller 11、settings 8、chat-view 20、timeline 5、context 5、webview-ui 6、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、skills-* 27、knowledge-* 11、bundle 1）
+- `knowledge-server`：19 个测试（Node test runner + 真实 HTTP）
 - `skill-server`：9 个测试（Node test runner）
 - 另有 1 个真实 Codex 集成测试（`V2_E2E=1` 手动运行）已通过。
 - 10 条 eval 基线已跑通：9/10（90%）。
@@ -628,6 +630,42 @@ npm run verify   # build + vitest + check-boundaries
 
 - UI-2：transcript 持久化、原生 diff、重试/错误恢复（token/耗时已由时间线提供）。
 - UI-3：Skill 库 / 知识面板。
+
+---
+
+## 2.5 Knowledge Base（KB-0/KB-1，2026-11-12）
+
+**完成内容**
+
+- 新独立服务 `knowledge-server/`：Node 24 + 内置 `node:sqlite` FTS5
+  （trigram），零 native 依赖；默认 `127.0.0.1:4771`。
+- Contract：`knowledge-server/docs/CONTRACT.md`（API/SQLite schema/chunk/
+  canonicalization/limits/security）。
+- API：status、collections、documents list/get、batch upsert + `removedPaths`、
+  delete、search、reindex、maintenance、audit。
+- 索引：collection 命名空间、content hash 去重、secret 跳过/清除、
+  redaction、FTS 触发器、显式 `chunk_rowid`（VACUUM 安全）。
+- 检索：quoted FTS terms、AND→OR 重试、中文 <3 码点 `instr` fallback、
+  path/extension/sensitivity 过滤、snippet、citation 行号。
+- Extension：`src/knowledge/{types,client,scanner,formatter,settings}.ts`、
+  `knowledge-commands.ts`；设置页「知识」Tab；Reindex/Search/Status/Token 命令；
+  `<knowledge>` 注入到 `TurnInput.context`；回答下方 citation chips + 文件行跳转。
+- 失败降级：Knowledge server 不可达时只 warning，turn 继续。
+
+**测试**
+
+- `knowledge-server`：19 passed（chunk、FTS 触发器/VACUUM/reindex、CJK fallback、
+  redaction/secret、collection/filter、HTTP auth/upsert/search/audit）。
+- `extension`：107 passed / 1 skipped（新增 knowledge client/scanner/formatter、
+  chat-view citation injection）。
+- 回归：runtime 142、skill-server 9。
+
+**已知限制**
+
+- 无 per-collection ACL；collection + token role 只做命名空间隔离。
+- 无文件 watcher；需要手动 Reindex。
+- 引用行号是索引时快照，文件变化后可能 stale。
+- 中文 1–2 字查询召回弱；embedding/hybrid 留到 KB-6。
 
 ---
 

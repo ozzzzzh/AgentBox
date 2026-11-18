@@ -35,7 +35,7 @@ AgentBox 不是“再造一个 coding agent”，而是：
 **当前状态：**
 
 - Skill 系统：已实现并验证；
-- Knowledge Base：设计完成，待实现；
+- Knowledge Base：KB-0/KB-1 已实现（knowledge-server + extension client/命令/注入/引用）；
 - Runtime：Codex 主，OpenCode adapter 暂缓；
 - Codex Windows shell：PowerShell 5.1；Git Bash 尝试已回退。
 
@@ -50,7 +50,7 @@ flowchart LR
     Chat["ChatViewProvider\nSessions / Settings / Approvals"]
     Context["Context Assembler\n(currently in chat-view)"]
     SkillClient["SkillClient\nHTTP + cache"]
-    KnowledgeClient["KnowledgeClient\n(planned)"]
+    KnowledgeClient["KnowledgeClient\nHTTP + formatter"]
     Controller["RuntimeController"]
     Runtime["AgentRuntime"]
   end
@@ -68,10 +68,10 @@ flowchart LR
   OpenCode -.-> Model
 
   SkillClient --> SkillServer["Skill Server\nNode 24"]
-  KnowledgeClient -.-> KnowledgeServer["Knowledge Server\n(planned, Node 24 + SQLite FTS5)"]
+  KnowledgeClient --> KnowledgeServer["Knowledge Server\nNode 24 + SQLite FTS5"]
 
   SkillServer --> SkillData["skill data\nindex / policies / groups /\nmemberships / audit / packages"]
-  KnowledgeServer -.-> KBData["knowledge data\ndocuments / chunks / FTS5 / audit"]
+  KnowledgeServer --> KBData["knowledge data\ndocuments / chunks / FTS5 / audit"]
 ```
 
 ### 2.1 本地开发拓扑
@@ -81,13 +81,13 @@ VS Code
   └─ AgentBox extension
        ├─ codex.exe app-server (stdio)
        └─ HTTP → http://127.0.0.1:4770  skill-server
-                 http://127.0.0.1:4771  knowledge-server (planned)
+                 http://127.0.0.1:4771  knowledge-server
 
 skill-server
   └─ .dev-data/ (或 SKILL_SERVER_DATA)
 
 knowledge-server
-  └─ .knowledge-data/ (planned)
+  └─ .knowledge-data/ (dev) 或 KNOWLEDGE_SERVER_DATA
 ```
 
 ### 2.2 团队/云端拓扑
@@ -117,7 +117,7 @@ VS Code extension
 
 - 侧边栏 Webview 与编辑器面板；
 - 多会话、会话 transcript、设置、审批卡片；
-- Context 组装：当前文件/选区、Skill 注入、知识检索（规划）；
+- Context 组装：当前文件/选区、Skill 注入、知识检索（top-k + citations）；
 - 调用 `AgentRuntime`，把 `AgentEvent` 映射为 UI；
 - SkillClient：远程同步、缓存、组申请；
 - 不直接实现 agent loop，不直接调用模型 API。
@@ -180,25 +180,27 @@ SKILL_SERVER_DATA/
 admin > reviewer > author > reader
 ```
 
-### 3.4 Knowledge Server（规划）
+### 3.4 Knowledge Server
 
-位置：`knowledge-server/`（待创建）
+位置：`knowledge-server/`；契约见 `knowledge-server/docs/CONTRACT.md`。
 
 职责：
 
 - 接收 extension push 的 workspace 文档；
-- parse → chunk → metadata；
-- SQLite FTS5 索引；
+- canonicalization → redaction → chunk → metadata；
+- SQLite FTS5（trigram）索引；
 - search API（top-k、filters、snippets）；
 - citations（path / heading / line range）；
+- audit / status / maintenance；
 - 后续：collection ACL、embedding、hybrid retrieval。
 
 数据：
 
 ```text
-KNOWLEDGE_DATA/
+KNOWLEDGE_SERVER_DATA/
   knowledge.db          # documents / chunks / FTS5
-  objects/               # 可选原始文档
+  knowledge.db-wal
+  knowledge.db-shm
   audit.jsonl
 ```
 
@@ -233,7 +235,7 @@ sequenceDiagram
     W->>C: prompt + context flags
     C->>S: read remote skill cache
     C->>X: build context
-    X->>K: search top-k (planned)
+    X->>K: search top-k
     K-->>X: knowledge chunks + citations
     X-->>C: skills + project rules + knowledge
     C->>R: runTurn(prompt, context)
@@ -288,7 +290,7 @@ sequenceDiagram
 - required 仍由 policy 控制，但必须同时满足组审批；
 - 客户端使用稳定 `clientId`，支持多组申请。
 
-### 4.3 Knowledge 入库与检索（规划）
+### 4.3 Knowledge 入库与检索
 
 ```mermaid
 sequenceDiagram
@@ -363,17 +365,21 @@ Skill 包：
 
 客户端校验：`hash`、`id`、`version`、`enabled`、`required`。
 
-### 5.3 Knowledge API（规划）
+### 5.3 Knowledge API
 
 ```text
-GET  /healthz
-GET  /v1/knowledge/status
-POST /v1/knowledge/documents
+GET    /healthz
+GET    /v1/me
+GET    /v1/knowledge/status
+GET    /v1/knowledge/collections
+GET    /v1/knowledge/documents?collection=&limit=&offset=
+GET    /v1/knowledge/documents/:id
+POST   /v1/knowledge/documents        # batch upsert + removedPaths
 DELETE /v1/knowledge/documents/:id
-POST /v1/knowledge/search
-GET  /v1/knowledge/documents/:id
-POST /v1/knowledge/reindex
-GET  /v1/knowledge/audit
+POST   /v1/knowledge/search
+POST   /v1/knowledge/reindex
+POST   /v1/knowledge/maintenance
+GET    /v1/knowledge/audit
 ```
 
 检索响应必须带：
@@ -402,7 +408,7 @@ GET  /v1/knowledge/audit
 | `<globalStorage>/codex-home/` | Codex 配置/日志/线程 | 是 |
 | 扩展内存 | 会话 transcript / 多会话 | Reload 清空 |
 | `SKILL_SERVER_DATA` | Skill index/policy/group/membership/audit/package | 是 |
-| `KNOWLEDGE_DATA` | documents/chunks/FTS5/audit | 是（规划） |
+| `KNOWLEDGE_SERVER_DATA` | documents/chunks/FTS5/audit | 是 |
 
 ---
 
@@ -446,7 +452,7 @@ extension/ ──▶ @agentbox/runtime
     │                 └─▶ FakeRuntime
     │
     ├─▶ SkillClient ──HTTP──▶ skill-server
-    └─▶ KnowledgeClient ─HTTP─▶ knowledge-server (planned)
+    └─▶ KnowledgeClient ─HTTP─▶ knowledge-server
 ```
 
 规则：
@@ -468,7 +474,7 @@ extension/ ──▶ @agentbox/runtime
 | 未加入 group | grouped skill 不同步；unflagged skill 不受影响 |
 | group 申请 pending | 该组 skill 不可见 |
 | Skill hash/id/version 不符 | 单包 warning，不写入缓存 |
-| Knowledge server 不可达 | 无知识注入，turn 继续（规划） |
+| Knowledge server 不可达 | 无知识注入，turn 继续，显示 warning |
 | Codex Windows sandbox 未配置 | runtime 启动失败并提示 setup |
 | Codex 使用 Git Bash | 已回退，统一 PowerShell |
 
@@ -479,10 +485,10 @@ extension/ ──▶ @agentbox/runtime
 | 阶段 | 内容 |
 |---|---|
 | 当前 | Skill 系统闭环；Codex 主 runtime；settings/skill UI |
-| KB-0 | Knowledge 接口/schema/chunk contract |
-| KB-1 | knowledge-server + SQLite FTS5 |
-| KB-2 | search/citations + extension ContextAssembler |
-| KB-3 | Knowledge UI / 引用跳转 |
+| KB-0 ✅ | Knowledge 接口/schema/chunk contract |
+| KB-1 ✅ | knowledge-server + SQLite FTS5 |
+| KB-2 ✅ | search/citations + extension ContextAssembler |
+| KB-3 ✅ | Knowledge UI / 引用跳转 |
 | KB-4 | 评估集、ACL、云端部署 |
 | 后续 | Skill hardening（PENDING-2）、Runtime 解耦（PENDING-1）、OpenCode adapter、embedding |
 
@@ -498,3 +504,5 @@ extension/ ──▶ @agentbox/runtime
 - [agent-runtime/docs/HANDOFF.md](agent-runtime/docs/HANDOFF.md) — 当前交接/待决
 - [extension/README.md](extension/README.md) — VSIX 使用/配置
 - [skill-server/README.md](skill-server/README.md) — Skill Server API/运行
+- [knowledge-server/README.md](knowledge-server/README.md) — Knowledge Server 运行
+- [knowledge-server/docs/CONTRACT.md](knowledge-server/docs/CONTRACT.md) — KB API/schema/chunk

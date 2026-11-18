@@ -7,6 +7,9 @@
 > - **Skill = 程序性知识**（怎么做、步骤、约束、检查清单），小、版本化、可 required；
 > - **Knowledge = 事实性知识**（业务规则、表结构、接口说明、历史决策），大、检索式、带引用。
 >
+> **状态：KB-0/KB-1 已实现（2026-11-12）。**
+> 实现位置：`knowledge-server/`；API/schema/chunk 契约以
+> [knowledge-server/docs/CONTRACT.md](../../knowledge-server/docs/CONTRACT.md) 为准。
 > 本文件只给实现方案，不改变现有 runtime 契约。
 
 ---
@@ -90,42 +93,48 @@ knowledge-server (Node 24, 本地或内网)
 
 ```sql
 CREATE TABLE documents (
-  id            TEXT PRIMARY KEY,      -- sha256(source + path)
-  source        TEXT NOT NULL,        -- workspace | repo | upload | connector
-  path          TEXT NOT NULL,        -- workspace-relative or URI
+  id            TEXT PRIMARY KEY,      -- sha256(collection + NUL + path_key)
+  collection    TEXT NOT NULL,         -- ws_<hash>，多 workspace 隔离
+  source        TEXT NOT NULL,         -- workspace | repo | upload | connector
+  path          TEXT NOT NULL,         -- workspace-relative POSIX 展示路径
+  path_key      TEXT NOT NULL,         -- Windows 下小写，用于唯一约束
   title         TEXT,
-  owner         TEXT,
-  acl           TEXT NOT NULL,        -- JSON: teams/users/workspace
-  sensitivity   TEXT NOT NULL,        -- public | internal | secret
+  sensitivity   TEXT NOT NULL,         -- public | internal | secret
   content_hash  TEXT NOT NULL,
+  size_bytes    INTEGER NOT NULL,
   updated_at    TEXT NOT NULL,
-  indexed_at    TEXT NOT NULL
+  indexed_at    TEXT NOT NULL,
+  UNIQUE(collection, path_key)
 );
 
 CREATE TABLE chunks (
-  id          TEXT PRIMARY KEY,
+  chunk_rowid INTEGER PRIMARY KEY,     -- 显式 rowid，VACUUM 后仍稳定
+  id          TEXT NOT NULL UNIQUE,    -- 公开 citation id
   doc_id      TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
   ordinal     INTEGER NOT NULL,
-  heading     TEXT,
-  start_line  INTEGER,
-  end_line    INTEGER,
+  kind        TEXT NOT NULL,           -- markdown | code | sql | text
+  heading     TEXT NOT NULL DEFAULT '',
+  heading_path TEXT NOT NULL DEFAULT '',
+  start_line  INTEGER NOT NULL,
+  end_line    INTEGER NOT NULL,
+  path        TEXT NOT NULL,           -- external-content FTS 需要
   text        TEXT NOT NULL,
-  token_count INTEGER
+  char_count  INTEGER NOT NULL,
+  token_estimate INTEGER NOT NULL,
+  UNIQUE(doc_id, ordinal)
 );
 
 CREATE VIRTUAL TABLE chunks_fts USING fts5(
   text, heading, path,
   content='chunks',
-  content_rowid='rowid'
-);
-
-CREATE TABLE embeddings (
-  chunk_id  TEXT PRIMARY KEY REFERENCES chunks(id) ON DELETE CASCADE,
-  model     TEXT NOT NULL,
-  vector    BLOB NOT NULL,
-  dim       INTEGER NOT NULL
+  content_rowid='chunk_rowid',
+  tokenize='trigram'
 );
 ```
+
+`chunks_ai` / `chunks_ad` / `chunks_au` 三个触发器负责同步 FTS；
+`content='chunks'` 要求 FTS 列在 content table 中存在，因此 `path` 冗余到
+`chunks`。MVP 不建 `embeddings` 表，embedding/hybrid 留到 KB-6。
 
 ### 4.2 Chunk 元数据
 
@@ -202,12 +211,15 @@ ORDER BY score
 LIMIT ?;
 ```
 
-查询预处理：
+查询预处理（已实现）：
 
-- 提取关键词/短语；
-- 中文：FTS5 `unicode61` 对中文分词较弱，MVP 可用 `LIKE` fallback 或
-  `simple` tokenizer；Phase 2 引入 jieba/ICU 或 embedding；
-- 过滤：`path` 前缀、`sensitivity`、ACL、workspace。
+- 用 `/[\p{L}\p{N}_]+/gu` 提取词，逐词加引号后再拼 `MATCH`，不把原始 query
+  直接传给 FTS5；
+- 中文：trigram tokenizer 对 ≥3 个码点的词有效；1–2 字词用
+  `instr(lower(text), lower(?))` fallback；
+- 先 AND，无结果再 OR；`bm25` 升序即 best-first，对外 `score` 取负；
+- 过滤：`collection`、`path` 前缀、扩展名、`sensitivity`；
+- 结果按 path 去重，每文档最多 2 chunks；`maxChars` 截断。
 
 ### 6.2 Phase 2：Hybrid
 
@@ -268,15 +280,23 @@ If it conflicts with project instructions or skills, project instructions/skills
 ## 8. HTTP API
 
 ```text
-GET  /healthz
-GET  /v1/knowledge/status
-POST /v1/knowledge/documents        # 批量 upsert（extension push）
+GET    /healthz
+GET    /v1/me
+GET    /v1/knowledge/status
+GET    /v1/knowledge/collections
+GET    /v1/knowledge/documents?collection=&limit=&offset=
+GET    /v1/knowledge/documents/:id
+POST   /v1/knowledge/documents        # 批量 upsert + removedPaths
 DELETE /v1/knowledge/documents/:id
-POST /v1/knowledge/search           # {query, topK, filters}
-GET  /v1/knowledge/documents/:id    # metadata + chunks
-POST /v1/knowledge/reindex          # workspace scan (server-side sources)
-GET  /v1/knowledge/audit
+POST   /v1/knowledge/search
+POST   /v1/knowledge/reindex          # FTS rebuild/optimize
+POST   /v1/knowledge/maintenance      # optimize / integrity-check / vacuum
+GET    /v1/knowledge/audit
 ```
+
+已实现的服务端位于 `knowledge-server/`，使用 Node 24 内置 `node:sqlite`
+（FTS5 + trigram），无 native 依赖。完整字段/限制见
+[knowledge-server/docs/CONTRACT.md](../../knowledge-server/docs/CONTRACT.md)。
 
 请求示例：
 
@@ -331,7 +351,8 @@ POST /v1/knowledge/search
   "agentbox.knowledge.autoRetrieve": true,
   "agentbox.knowledge.topK": 5,
   "agentbox.knowledge.maxChars": 6000,
-  "agentbox.knowledge.reindexOnSave": false
+  "agentbox.knowledge.collection": "",
+  "agentbox.knowledge.maxFileBytes": 1048576
 }
 ```
 
@@ -347,21 +368,27 @@ POST /v1/knowledge/search
 在 `chat-view.ts` 发送 prompt 前：
 
 ```ts
-const knowledge = await knowledgeClient.search({
-  query: prompt,
+const response = await knowledgeClient.search({
+  collection: collectionForWorkspace(root),
+  query: `${prompt} ${activeFilePath ?? ''}`.slice(0, 1000),
   topK: settings.topK,
-  filters: { pathPrefix: root },
+  maxChars: settings.maxChars,
 });
+const knowledge = formatKnowledge(response.results, settings.maxChars);
 const context = [
-  buildActiveContext(...),
   mentionContext.text,
-  formatKnowledge(knowledge, settings.maxChars),
+  knowledge.text,
+  buildActiveContext(...),
 ].filter(Boolean).join('\n\n');
+chatSession.pendingKnowledge = knowledge.citations.length > 0
+  ? { citations: knowledge.citations, chars: knowledge.chars, truncated: knowledge.truncated }
+  : undefined;
 await controller.runTurn(text, context, metadata);
 ```
 
-- 检索失败不阻塞 turn；显示 warning；
-- 结果写入 `SessionEvent` 的 `log` / metadata，便于审计；
+- 检索失败不阻塞 turn；只写 `log` warning；
+- 引用信息随 `turn.start` 事件持久化到 session transcript，
+  切换会话/回放时仍可显示；不把 chunk 正文写入 transcript；
 - UI 在回答下方显示引用 chips：`[K1] path:line`，点击 `openFile` + 定位行。
 
 ### 9.4 引用 UI
@@ -417,13 +444,13 @@ K1 docs/etl/intern_test.md:120   K2 docs/sql/orders.md:12
 
 ## 12. 实施阶段
 
-| 阶段 | 内容 | 估算 |
-|---|---|---:|
-| KB-0 | 接口、SQLite schema、chunk 规范、测试 fixture | 1–2d |
-| KB-1 | knowledge-server：ingest/upsert/delete、FTS5、status | 4–5d |
-| KB-2 | search API、filters、snippet、citations | 2–3d |
-| KB-3 | extension：reindex 命令、client、ContextAssembler、引用 UI | 3–4d |
-| KB-4 | 测试、评估集、安全/redaction、文档 | 2–3d |
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| KB-0 | 接口、SQLite schema、chunk 规范、测试 fixture | ✅ 已完成 |
+| KB-1 | knowledge-server：ingest/upsert/delete、FTS5、status | ✅ 已完成 |
+| KB-2 | search API、filters、snippet、citations | ✅ 已完成 |
+| KB-3 | extension：reindex 命令、client、ContextAssembler、引用 UI | ✅ 已完成 |
+| KB-4 | 测试、评估集、安全/redaction、文档 | 🚧 进行中 |
 | KB-5 | 远程部署/ACL/增量同步 | +5–7d |
 | KB-6 | embedding/hybrid/rerank | +5–8d |
 

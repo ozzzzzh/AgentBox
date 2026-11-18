@@ -2,6 +2,7 @@ import type {
   ApprovalDecision,
   StopReason,
 } from '@agentbox/runtime';
+import type { KnowledgeTurnInfo } from './knowledge/types';
 import type { SkillCatalogItem } from './skills/catalog';
 import type { ClientGroupInfo } from './skills/client';
 import type { SkillUsage } from './skills/model';
@@ -32,11 +33,18 @@ export interface SettingsValues {
   skillsAutoSync: boolean;
   skillsRequiredMissing: string;
   skillsLocalDir: string;
+  knowledgeServerUrl: string;
+  knowledgeServerTokenConfigured: boolean;
+  knowledgeAutoRetrieve: boolean;
+  knowledgeTopK: number;
+  knowledgeMaxChars: number;
   /** Write-only values; empty means keep the stored secret. */
   apiKey?: string;
   skillServerToken?: string;
+  knowledgeServerToken?: string;
   clearApiKey?: boolean;
   clearSkillServerToken?: boolean;
+  clearKnowledgeServerToken?: boolean;
 }
 
 export interface SessionSummary {
@@ -53,7 +61,12 @@ export interface SessionSummary {
 export type SessionEvent =
   | { type: 'user.message'; text: string }
   | { type: 'busy'; busy: boolean }
-  | { type: 'turn.start'; turnId: string }
+  | {
+      type: 'turn.start';
+      turnId: string;
+      /** Citations for the knowledge injected into this turn. */
+      knowledge?: KnowledgeTurnInfo;
+    }
   | { type: 'assistant.delta'; text: string }
   | { type: 'reasoning.delta'; text: string; kind?: 'summary' | 'raw' }
   | { type: 'reasoning.end'; text: string; kind?: 'summary' | 'raw' }
@@ -127,7 +140,7 @@ export type WebviewToHost =
       id: string;
       decision: ApprovalDecision;
     }
-  | { type: 'openFile'; path: string }
+  | { type: 'openFile'; path: string; line?: number; endLine?: number }
   | { type: 'openToolDetails'; callId: string }
   | { type: 'openExternal'; url: string }
   | { type: 'openEditor' }
@@ -142,6 +155,9 @@ export type WebviewToHost =
   | { type: 'skills.sync' }
   | { type: 'skills.requestGroups' }
   | { type: 'skills.joinGroups'; ids: string[] }
+  | { type: 'knowledge.reindex' }
+  | { type: 'knowledge.search' }
+  | { type: 'knowledge.status' }
   | { type: 'session.new' }
   | { type: 'session.select'; id: string }
   | { type: 'session.close'; id: string; confirm: boolean };

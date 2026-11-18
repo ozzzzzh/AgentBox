@@ -11,6 +11,14 @@ import type {
 import { buildContextText } from './context';
 import { RuntimeController } from './controller';
 import { evaluateApprovalPolicy } from './file-policy';
+import { KnowledgeServerClient } from './knowledge/client';
+import { formatKnowledge } from './knowledge/formatter';
+import {
+  collectionForWorkspace,
+  knowledgeServerTokenKey,
+  readKnowledgeSettings,
+} from './knowledge/settings';
+import type { KnowledgeTurnInfo } from './knowledge/types';
 import { ToolLoopDetector } from './loop-detector';
 import {
   createAgentRuntime,
@@ -89,6 +97,8 @@ interface ChatSession {
   /** Session-scoped UI events, replayed into each webview surface. */
   events: SessionEvent[];
   skillUsage?: SkillUsage[];
+  /** Knowledge citations to attach to the next turn.start event. */
+  pendingKnowledge?: KnowledgeTurnInfo;
   toolDetails: Map<string, ToolDetail>;
   /** Current reasoning summary buffer; only the final text is persisted. */
   reasoningBuffer: string;
@@ -335,7 +345,11 @@ export class ChatViewProvider
     const provider = config.get<string>('codex.provider', 'deepseek');
     const apiKey = await this.context.secrets.get(secretKey(provider));
     const skillToken = await this.context.secrets.get(skillServerTokenKey());
+    const knowledgeToken = await this.context.secrets.get(
+      knowledgeServerTokenKey()
+    );
     const skillSettings = readSkillSettings();
+    const knowledgeSettings = readKnowledgeSettings();
     return {
       runtime: config.get<string>('runtime', 'codex'),
       taskProfile: config.get<string>('taskProfile', 'code'),
@@ -357,6 +371,12 @@ export class ChatViewProvider
       skillsAutoSync: skillSettings.autoSync,
       skillsRequiredMissing: skillSettings.requiredMissing,
       skillsLocalDir: skillSettings.localDir,
+      knowledgeServerUrl: knowledgeSettings.serverUrl,
+      knowledgeServerTokenConfigured:
+        knowledgeToken !== undefined && knowledgeToken.trim() !== '',
+      knowledgeAutoRetrieve: knowledgeSettings.autoRetrieve,
+      knowledgeTopK: knowledgeSettings.topK,
+      knowledgeMaxChars: knowledgeSettings.maxChars,
     };
   }
 
@@ -413,13 +433,38 @@ export class ChatViewProvider
       raw.skillsRequiredMissing === 'block' ? 'block' : 'warn';
     const skillsLocalDir =
       typeof raw.skillsLocalDir === 'string' ? raw.skillsLocalDir.trim() : '';
+    const knowledgeServerUrl =
+      typeof raw.knowledgeServerUrl === 'string'
+        ? raw.knowledgeServerUrl.trim()
+        : '';
+    const knowledgeAutoRetrieve = raw.knowledgeAutoRetrieve === true;
+    const knowledgeTopK =
+      typeof raw.knowledgeTopK === 'number' &&
+      Number.isInteger(raw.knowledgeTopK) &&
+      raw.knowledgeTopK >= 1 &&
+      raw.knowledgeTopK <= 20
+        ? raw.knowledgeTopK
+        : 5;
+    const knowledgeMaxChars =
+      typeof raw.knowledgeMaxChars === 'number' &&
+      Number.isInteger(raw.knowledgeMaxChars) &&
+      raw.knowledgeMaxChars >= 1_000 &&
+      raw.knowledgeMaxChars <= 20_000
+        ? raw.knowledgeMaxChars
+        : 6_000;
     const apiKey = typeof raw.apiKey === 'string' ? raw.apiKey.trim() : '';
     const skillServerToken =
       typeof raw.skillServerToken === 'string'
         ? raw.skillServerToken.trim()
         : '';
+    const knowledgeServerToken =
+      typeof raw.knowledgeServerToken === 'string'
+        ? raw.knowledgeServerToken.trim()
+        : '';
     const clearApiKey = raw.clearApiKey === true;
     const clearSkillServerToken = raw.clearSkillServerToken === true;
+    const clearKnowledgeServerToken =
+      raw.clearKnowledgeServerToken === true;
     if (
       runtime === undefined ||
       taskProfile === undefined ||
@@ -442,6 +487,20 @@ export class ChatViewProvider
       });
       return;
     }
+    if (knowledgeServerUrl !== '') {
+      try {
+        new KnowledgeServerClient(knowledgeServerUrl);
+      } catch (error) {
+        this.post({
+          type: 'settings.error',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Knowledge Server URL 无效。',
+        });
+        return;
+      }
+    }
 
     const folders = vscode.workspace.workspaceFolders;
     const target =
@@ -463,6 +522,10 @@ export class ChatViewProvider
     await config.update('skills.autoSync', skillsAutoSync, target);
     await config.update('skills.requiredMissing', skillsRequiredMissing, target);
     await config.update('skills.localDir', skillsLocalDir, target);
+    await config.update('knowledge.serverUrl', knowledgeServerUrl, target);
+    await config.update('knowledge.autoRetrieve', knowledgeAutoRetrieve, target);
+    await config.update('knowledge.topK', knowledgeTopK, target);
+    await config.update('knowledge.maxChars', knowledgeMaxChars, target);
 
     if (clearApiKey) {
       await this.context.secrets.delete(secretKey(provider));
@@ -474,11 +537,20 @@ export class ChatViewProvider
     } else if (skillServerToken !== '') {
       await this.context.secrets.store(skillServerTokenKey(), skillServerToken);
     }
+    if (clearKnowledgeServerToken) {
+      await this.context.secrets.delete(knowledgeServerTokenKey());
+    } else if (knowledgeServerToken !== '') {
+      await this.context.secrets.store(
+        knowledgeServerTokenKey(),
+        knowledgeServerToken
+      );
+    }
 
     this.output.appendLine(
       `[config] runtime=${runtime} profile=${taskProfile} provider=${provider} ` +
         `model=${model} approval=${approvalPolicy} effort=${reasoningEffort} ` +
-        `skills=${skillServerUrl === '' ? 'off' : skillServerUrl}`
+        `skills=${skillServerUrl === '' ? 'off' : skillServerUrl} ` +
+        `knowledge=${knowledgeServerUrl === '' ? 'off' : knowledgeServerUrl}`
     );
 
     this.refreshLabels();
@@ -816,9 +888,21 @@ export class ChatViewProvider
           for (const warning of mentionContext.warnings) {
             this.output.appendLine(`[skill] ${warning}`);
           }
+          const activeContext = this.buildActiveContext(
+            root,
+            includeFile,
+            includeSelection
+          );
+          const knowledge = await this.retrieveKnowledge(
+            chatSession,
+            text,
+            root,
+            includeFile
+          );
           const contextParts = [
-            this.buildActiveContext(root, includeFile, includeSelection),
             mentionContext.text,
+            knowledge.text,
+            activeContext,
           ].filter(
             (part): part is string =>
               typeof part === 'string' && part.trim() !== ''
@@ -832,11 +916,18 @@ export class ChatViewProvider
             (item, index, list) =>
               list.findIndex((candidate) => candidate.id === item.id) === index
           );
-          await controller.runTurn(
-            text,
-            context,
-            metadataSkills.length > 0 ? { skills: metadataSkills } : undefined
-          );
+          if (knowledge.info !== undefined) {
+            chatSession.pendingKnowledge = knowledge.info;
+          }
+          try {
+            await controller.runTurn(
+              text,
+              context,
+              metadataSkills.length > 0 ? { skills: metadataSkills } : undefined
+            );
+          } finally {
+            chatSession.pendingKnowledge = undefined;
+          }
           return;
         }
 
@@ -853,7 +944,10 @@ export class ChatViewProvider
 
         case 'openFile':
           if (typeof raw.path === 'string') {
-            await this.openWorkspaceFile(raw.path);
+            await this.openWorkspaceFile(
+              raw.path,
+              typeof raw.line === 'number' ? raw.line : undefined
+            );
           }
           return;
 
@@ -949,6 +1043,18 @@ export class ChatViewProvider
           }
           return;
         }
+
+        case 'knowledge.reindex':
+          await vscode.commands.executeCommand('agentbox.reindexKnowledge');
+          return;
+
+        case 'knowledge.search':
+          await vscode.commands.executeCommand('agentbox.searchKnowledge');
+          return;
+
+        case 'knowledge.status':
+          await vscode.commands.executeCommand('agentbox.knowledgeStatus');
+          return;
 
         case 'session.new':
           await this.newSession();
@@ -1073,6 +1179,56 @@ export class ChatViewProvider
     });
   }
 
+  private async retrieveKnowledge(
+    session: ChatSession,
+    prompt: string,
+    root: string,
+    includeFile: boolean
+  ): Promise<{ text?: string; info?: KnowledgeTurnInfo }> {
+    const settings = readKnowledgeSettings();
+    if (settings.serverUrl === '' || !settings.autoRetrieve) return {};
+
+    try {
+      const token = await this.context.secrets.get(knowledgeServerTokenKey());
+      const client = new KnowledgeServerClient(
+        settings.serverUrl,
+        token?.trim() || undefined
+      );
+      let query = prompt;
+      if (includeFile) {
+        const editor = vscode.window.activeTextEditor;
+        if (editor !== undefined && editor.document.uri.scheme === 'file') {
+          const rel = toWorkspacePath(root, editor.document.uri.fsPath);
+          if (rel !== undefined) query = `${query} ${rel}`;
+        }
+      }
+      const response = await client.search({
+        collection: collectionForWorkspace(root, settings),
+        query: query.slice(0, 1_000),
+        topK: settings.topK,
+        maxChars: settings.maxChars,
+      });
+      const formatted = formatKnowledge(response.results, settings.maxChars);
+      if (formatted.text === '' || formatted.citations.length === 0) return {};
+      return {
+        text: formatted.text,
+        info: {
+          citations: formatted.citations,
+          chars: formatted.chars,
+          truncated: formatted.truncated,
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`[knowledge] ${message}`);
+      this.emit(session, {
+        type: 'log',
+        text: `知识检索不可用，本轮继续：${message}`,
+      });
+      return {};
+    }
+  }
+
   private postContext(): void {
     if (this.surfaces.length === 0) return;
     const editor = vscode.window.activeTextEditor;
@@ -1150,6 +1306,10 @@ export class ChatViewProvider
       if (session.reasoningTimer !== undefined) {
         clearTimeout(session.reasoningTimer);
         session.reasoningTimer = undefined;
+      }
+      if (session.pendingKnowledge !== undefined) {
+        outgoing = { ...message, knowledge: session.pendingKnowledge };
+        session.pendingKnowledge = undefined;
       }
     } else if (
       message.type === 'tool.start' &&
@@ -1379,7 +1539,10 @@ export class ChatViewProvider
     await vscode.window.showTextDocument(document, { preview: true });
   }
 
-  private async openWorkspaceFile(path: string): Promise<void> {
+  private async openWorkspaceFile(
+    path: string,
+    line?: number
+  ): Promise<void> {
     const root = this.currentRoot();
     if (root === undefined) {
       void vscode.window.showWarningMessage('AgentBox: open a workspace first.');
@@ -1394,7 +1557,21 @@ export class ChatViewProvider
       const document = await vscode.workspace.openTextDocument(
         vscode.Uri.file(absolute)
       );
-      await vscode.window.showTextDocument(document, { preview: true });
+      const editor = await vscode.window.showTextDocument(document, {
+        preview: true,
+      });
+      if (line !== undefined) {
+        const target = Math.min(
+          Math.max(1, Math.trunc(line)),
+          Math.max(1, document.lineCount)
+        );
+        const position = new vscode.Position(target - 1, 0);
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(
+          new vscode.Range(position, position),
+          vscode.TextEditorRevealType.InCenter
+        );
+      }
     } catch (error) {
       void vscode.window.showErrorMessage(
         `AgentBox: cannot open ${path}: ${
@@ -1524,6 +1701,10 @@ export class ChatViewProvider
           <svg class="settings-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.5h6.5L13 6v6.5H4z"/><path d="M10 3.5V6h3M6 8.5h5M6 10.5h3"/></svg>
           Skill
         </button>
+        <button class="settings-tab" type="button" data-settings-tab="knowledge">
+          <svg class="settings-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3.2C6.6 2.4 4.9 2.2 3 2.5v10c1.9-.3 3.6-.1 5 .7 1.4-.8 3.1-1 5-.7v-10c-1.9-.3-3.6-.1-5 .7Z"/><path d="M8 3.2v10"/></svg>
+          知识
+        </button>
         <button class="settings-tab" type="button" data-settings-tab="advanced">
           <svg class="settings-tab-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10"/><circle cx="6" cy="4.5" r="1.4"/><circle cx="10" cy="8" r="1.4"/><circle cx="7" cy="11.5" r="1.4"/></svg>
           高级
@@ -1622,6 +1803,42 @@ export class ChatViewProvider
             </details>
             <button id="join-skill-groups" class="primary" type="button">申请加入</button>
           </div>
+        </div>
+
+        <div class="settings-page" data-settings-page="knowledge" hidden>
+          <label class="field">
+            <span>Server URL</span>
+            <input id="setting-knowledge-server-url" type="text" autocomplete="off" placeholder="http://127.0.0.1:4771" />
+          </label>
+          <label class="field">
+            <span>Server Token</span>
+            <div class="field-inline">
+              <input id="setting-knowledge-server-token" type="password" autocomplete="off" placeholder="留空表示不修改" />
+              <button id="clear-knowledge-server-token" class="text-button" type="button">清除</button>
+            </div>
+          </label>
+          <label class="field checkbox-field">
+            <input id="setting-knowledge-auto-retrieve" type="checkbox" />
+            <span>每轮自动检索知识</span>
+          </label>
+          <label class="field">
+            <span>Top K</span>
+            <input id="setting-knowledge-top-k" type="number" min="1" max="20" />
+          </label>
+          <label class="field">
+            <span>最大字符</span>
+            <input id="setting-knowledge-max-chars" type="number" min="1000" max="20000" />
+          </label>
+          <div class="settings-section">知识库索引</div>
+          <div class="knowledge-actions">
+            <button id="knowledge-reindex" class="secondary" type="button">重建索引</button>
+            <button id="knowledge-search" class="secondary" type="button">搜索</button>
+            <button id="knowledge-status" class="secondary" type="button">状态</button>
+          </div>
+          <p class="settings-hint">
+            检索结果只作为参考上下文注入，不会覆盖 Skill 或项目指令。
+            远程服务会看到 prompt 和文档内容。
+          </p>
         </div>
 
         <div class="settings-page" data-settings-page="advanced" hidden>

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './chat-view';
 import { RuntimeController } from './controller';
+import { registerKnowledgeCommands } from './knowledge-commands';
 import { registerSkillCommands } from './skill-commands';
 import { evaluateApprovalPolicy } from './file-policy';
 import { ToolLoopDetector } from './loop-detector';
@@ -134,6 +135,7 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     provider,
     ...registerSkillCommands(context),
+    ...registerKnowledgeCommands(context),
     vscode.window.registerWebviewViewProvider('agentbox.chat', provider, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
