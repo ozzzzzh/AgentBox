@@ -264,7 +264,11 @@ export class KnowledgeStore {
     }
 
     const source = request.source ?? 'workspace';
-    if (!['workspace', 'repo', 'upload', 'connector'].includes(source)) {
+    if (
+      !['workspace', 'repo', 'upload', 'connector', 'conversation'].includes(
+        source
+      )
+    ) {
       throw new KnowledgeError(400, 'INVALID_SOURCE', 'invalid document source');
     }
 

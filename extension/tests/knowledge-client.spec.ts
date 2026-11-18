@@ -78,6 +78,44 @@ describe('knowledge server client', () => {
     ).not.toThrow();
   });
 
+  it('exposes the remote proposal interface', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          id: 'kp_1',
+          status: 'pending',
+          title: 'A',
+          summary: '',
+          content: 'body',
+          tags: [],
+          sensitivity: 'internal',
+          source: 'conversation',
+          target: 'remote',
+          provenance: {},
+          author: 'alice',
+          contentHash: 'h',
+          createdAt: '2026-11-18T00:00:00Z',
+        }),
+        { status: 200 }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new KnowledgeServerClient('http://127.0.0.1:4771', 'token');
+    const proposal = await client.createProposal({
+      title: 'A',
+      summary: '',
+      content: 'body',
+      author: 'alice',
+    });
+    expect(proposal.id).toBe('kp_1');
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      { method: string },
+    ];
+    expect(url).toBe('http://127.0.0.1:4771/v1/knowledge/proposals');
+    expect(init.method).toBe('POST');
+  });
+
   it('lists documents with pagination parameters', async () => {
     const fetchMock = vi.fn(async () =>
       new Response(JSON.stringify({ documents: [], total: 0 }), { status: 200 })

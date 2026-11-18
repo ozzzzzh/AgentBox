@@ -158,6 +158,14 @@ export function activate(context: vscode.ExtensionContext): void {
       await provider.openSettings();
     }),
 
+    vscode.commands.registerCommand('agentbox.captureKnowledge', async () => {
+      await provider.captureKnowledge();
+    }),
+
+    vscode.commands.registerCommand('agentbox.knowledgeProposals', async () => {
+      await provider.openKnowledge();
+    }),
+
     vscode.commands.registerCommand('agentbox.runTurn', async () => {
       const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
       if (root === undefined) {

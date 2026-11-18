@@ -120,6 +120,11 @@ VS Code extension
 - Context 组装：当前文件/选区、Skill 注入、知识检索（top-k + citations）；
 - 调用 `AgentRuntime`，把 `AgentEvent` 映射为 UI；
 - SkillClient：远程同步、缓存、组申请；
+- KnowledgeClient + Provider 接口：本地/远程检索；
+- 内置 Knowledge Capture workflow：LLM 压缩当前 turn → 本地 pending proposal →
+  用户审核/编辑 → 发布；
+- 本地 proposal 存 extension globalStorage，远程 proposal 走 HTTP（接口已定，
+  服务端 proposal API 待实现）；
 - 不直接实现 agent loop，不直接调用模型 API。
 
 关键边界：
@@ -192,7 +197,8 @@ admin > reviewer > author > reader
 - search API（top-k、filters、snippets）；
 - citations（path / heading / line range）；
 - audit / status / maintenance；
-- 后续：collection ACL、embedding、hybrid retrieval。
+- 已支持 `source: conversation` 的发布写入；
+- 后续：proposal/review API、collection ACL、embedding、hybrid retrieval。
 
 数据：
 
@@ -380,6 +386,16 @@ POST   /v1/knowledge/search
 POST   /v1/knowledge/reindex
 POST   /v1/knowledge/maintenance
 GET    /v1/knowledge/audit
+```
+
+Remote proposal 接口（客户端已定义，服务端待实现）：
+
+```text
+POST   /v1/knowledge/proposals
+GET    /v1/knowledge/proposals?status=pending
+PATCH  /v1/knowledge/proposals/:id
+POST   /v1/knowledge/proposals/:id/approve
+POST   /v1/knowledge/proposals/:id/reject
 ```
 
 检索响应必须带：

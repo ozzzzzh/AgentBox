@@ -1,6 +1,11 @@
 import type {
   AuditEntry,
   DocumentListResponse,
+  KnowledgeProposal,
+  KnowledgeProposalInput,
+  KnowledgeProposalPatch,
+  KnowledgeProposalStatus,
+  KnowledgeProposalSummary,
   SearchRequest,
   SearchResponse,
   StatusResponse,
@@ -178,5 +183,51 @@ export class KnowledgeServerClient {
     const params = new URLSearchParams({ limit: String(limit) });
     if (action !== undefined && action !== '') params.set('action', action);
     return this.request(`/v1/knowledge/audit?${params.toString()}`);
+  }
+
+  createProposal(input: KnowledgeProposalInput): Promise<KnowledgeProposal> {
+    return this.request(
+      '/v1/knowledge/proposals',
+      { method: 'POST', body: JSON.stringify(input) },
+      30_000
+    );
+  }
+
+  listProposals(
+    status?: KnowledgeProposalStatus
+  ): Promise<KnowledgeProposalSummary[]> {
+    const params = new URLSearchParams();
+    if (status !== undefined) params.set('status', status);
+    const suffix = params.toString() === '' ? '' : `?${params.toString()}`;
+    return this.request<{ proposals?: KnowledgeProposalSummary[] }>(
+      `/v1/knowledge/proposals${suffix}`
+    ).then((value) => (Array.isArray(value.proposals) ? value.proposals : []));
+  }
+
+  updateProposal(
+    id: string,
+    patch: KnowledgeProposalPatch
+  ): Promise<KnowledgeProposal> {
+    return this.request(
+      `/v1/knowledge/proposals/${encodeURIComponent(id)}`,
+      { method: 'PATCH', body: JSON.stringify(patch) },
+      30_000
+    );
+  }
+
+  approveProposal(id: string): Promise<KnowledgeProposal> {
+    return this.request(
+      `/v1/knowledge/proposals/${encodeURIComponent(id)}/approve`,
+      { method: 'POST', body: JSON.stringify({}) },
+      30_000
+    );
+  }
+
+  rejectProposal(id: string): Promise<KnowledgeProposal> {
+    return this.request(
+      `/v1/knowledge/proposals/${encodeURIComponent(id)}/reject`,
+      { method: 'POST', body: JSON.stringify({}) },
+      30_000
+    );
   }
 }

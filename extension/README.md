@@ -41,7 +41,7 @@
 cd extension
 npm install
 npm run build      # 构建 runtime + typecheck + esbuild（extension + webview）
-npm test           # 107 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / knowledge-* / bundle）
+npm test           # 116 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / knowledge-* / bundle）
 npm run verify
 ```
 
@@ -363,7 +363,9 @@ npm run dev
   并清理服务端已删除路径；
 - `AgentBox: Search Knowledge`：搜索并打开命中文件行；
 - `AgentBox: Knowledge Status`：文档/chunk/最后索引时间；
-- `AgentBox: Set Knowledge Server Token`：SecretStorage。
+- `AgentBox: Set Knowledge Server Token`：SecretStorage；
+- `AgentBox: Capture Knowledge`：用内置 capture workflow 压缩当前对话，生成待审核知识提案；
+- `AgentBox: Knowledge Proposals`：打开知识提案面板。
 
 注入顺序：
 
@@ -376,6 +378,23 @@ mention skill
 
 回答下方显示 `[K1] path:line` 引用 chips，点击打开并定位到源文件行。
 知识服务不可达时只显示 warning，turn 继续。
+
+**知识沉淀（Local，当前 POC）**：
+
+- 顶栏 **知识** 按钮打开「知识提案」面板；
+- **沉淀当前对话**：使用内置 capture workflow（不是 local/remote skill），
+  取当前 turn 的 user/assistant 内容，让模型压缩成结构化 proposal；
+- 结果先写入 `<globalStorage>/agentbox/knowledge/proposals/<id>.json/.md`，
+  状态 `pending`，**不会直接进入检索**；
+- 点击 **编辑** 打开 Markdown 修改；**通过并发布** 才调用本地 knowledge-server
+  的 `POST /v1/knowledge/documents`（`source: conversation`）；
+- **拒绝** 将 proposal 标记为 rejected；
+- Local 由当前用户自己审核；Remote proposal HTTP 接口已在
+  `src/knowledge/client.ts` / `provider.ts` 中定义，服务端 proposal API 尚未实现，
+  后续可热拔插。
+
+> capture workflow 当前会启动一个独立的临时 runtime 来压缩上下文，避免污染主会话
+> thread；手动触发，不会每轮自动运行。
 
 > 索引会把 workspace 内容发送到 knowledge server；远程 server 也会看到用户 prompt。
 > `http://` 只允许 localhost，非 loopback 必须 HTTPS + token。当前 MVP 没有
@@ -506,6 +525,8 @@ assistant 消息按时间顺序显示 **处理过程**：思考、工具、中�
 | `AgentBox: Search Knowledge` | 搜索知识库并打开命中文件行 |
 | `AgentBox: Knowledge Status` | 查看文档/chunk/最后索引时间 |
 | `AgentBox: Set Knowledge Server Token` | 存 Knowledge token 到 SecretStorage |
+| `AgentBox: Capture Knowledge` | LLM 压缩当前对话，生成待审核知识提案 |
+| `AgentBox: Knowledge Proposals` | 打开知识提案审核面板 |
 | `AgentBox: Knowledge Settings` | 打开设置浮层（知识页） |
 | `AgentBox: Run Turn` | 降级入口：OutputChannel + 模态审批 |
 | `AgentBox: Cancel Turn` | 取消侧边栏或降级入口中的活动 turn |
@@ -549,6 +570,9 @@ assistant 消息按时间顺序显示 **处理过程**：思考、工具、中�
 - Knowledge server 当前没有 per-collection ACL；`collection` + token role 只做命名空间隔离。
 - 中文 1–2 字查询走 `instr` fallback，召回/排序弱于 trigram；后续可加 jieba/embedding。
 - Knowledge 自动检索会把 prompt 和文件上下文摘要发给 server；远程部署前需评估隐私边界。
+- Local 知识提案存在扩展 globalStorage，不跨机器同步；Remote proposal API 目前只是客户端接口，服务端 proposal/review 端点待实现。
+- capture workflow 会启动独立临时 runtime，首次执行有 Codex 启动开销；只支持手动触发。
+- 提案编辑目前修改 Markdown 正文；标题/标签的结构化编辑 UI 尚未提供。
 - Skill Registry MVP 使用静态 token + 文件系统存储；生产应换 OIDC、TLS、备份和审计轮转。
 - 文件策略只在审批阶段生效；不请求审批的命令无法被拦截，仍需沙箱/ACL 做硬限制。
 - 循环检测只基于工具失败；不检测“成功但低效”的重复调用。

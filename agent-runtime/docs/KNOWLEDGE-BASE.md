@@ -486,3 +486,31 @@ K1 docs/etl/intern_test.md:120   K2 docs/sql/orders.md:12
 6. 用 10 条 Q&A 做第一版 recall/citation 评估。
 
 先不要做 embedding、Connector、复杂 UI；等 FTS 闭环稳定后再加。
+
+---
+
+## 15. 知识沉淀（Local Capture，2026-11-18）
+
+当前已实现 Local 闭环：
+
+```text
+Webview「知识」按钮 / AgentBox: Capture Knowledge
+  → 内置 capture workflow 读取当前 turn
+  → 独立临时 runtime 让 LLM 压缩成结构化 proposal
+  → pending proposal 写入
+     <globalStorage>/agentbox/knowledge/proposals/<id>.json + .md
+  → 用户编辑 Markdown / 通过 / 拒绝
+  → 通过后以 source=conversation 发布到本地 knowledge-server
+```
+
+约束：
+
+- capture 是 AgentBox 内置 workflow，不是 local/remote Skill Registry 中的 skill；
+- 不会自动每轮运行；当前只支持手动触发；
+- proposal 不直接进入检索，必须审核发布；
+- Local 由当前用户自己审核；Remote proposal 客户端/provider 接口已定义
+  (`extension/src/knowledge/{client,provider,remote-provider}.ts`)，
+  服务端 proposal/review API 尚未实现；
+- 内置 tool 方向：Codex app-server schema 有 MCP/tool 能力，但当前 adapter 没有
+  自定义 tool 注册入口；先用 host-side capture workflow，后续可升级为
+  `knowledge_capture` MCP tool，不改变 proposal 数据模型。

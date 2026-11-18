@@ -71,6 +71,7 @@ test('author upserts, reader searches, removedPaths deletes', async () => {
       user: 'alice',
       body: {
         collection: 'ws_test',
+        source: 'conversation',
         documents: [
           {
             path: 'docs/etl.md',

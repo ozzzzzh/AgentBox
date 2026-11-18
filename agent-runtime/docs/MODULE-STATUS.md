@@ -36,12 +36,12 @@
 | **SK-1..S6** Skill 系统 MVP | ✅ | 2026-11-02 | [SKILL-SYSTEM.md](SKILL-SYSTEM.md)、`extension/src/skills/*`、`skill-server/` | 95 + 9 | 本地/远程 skill、HTTP Registry、审批、required、同步、注入、技能抽屉/@ 主动调用通过 |
 | **PERF-1** Turn 超时/推理强度 | ✅ | 2026-11-05 | [PERFORMANCE.md](PERFORMANCE.md)、controller/runtime | 94 | 超时 turn/interrupt、reasoning effort medium、reasoning display auto/raw、提示词硬化 |
 | **M11** Runtime 解耦 / bash-capable runtime | ⬜ 暂缓 | — | [HANDOFF.md](HANDOFF.md) §10 PENDING-1 | — | Codex 已回退 PowerShell（2026-11-06）；先完成 Skill Server/KB；当前保持 `AgentRuntime`/`AgentEvent` 契约纪律 |
-| **KB-0/KB-1** Knowledge Base | ✅ | 2026-11-12 | `knowledge-server/`、[CONTRACT.md](../../knowledge-server/docs/CONTRACT.md)、`extension/src/knowledge/*`、`agentbox-0.4.0.vsix` | 19 + 107 | FTS5/trigram、upsert/search、redaction/secret、ContextAssembler、引用 chips、server-down 降级 |
+| **KB-0/KB-1** Knowledge Base | ✅ | 2026-11-18 | `knowledge-server/`、[CONTRACT.md](../../knowledge-server/docs/CONTRACT.md)、`extension/src/knowledge/*`、`agentbox-0.4.0.vsix` | 19 + 116 | FTS5/trigram、upsert/search、redaction/secret、ContextAssembler、引用 chips、local capture/proposal、server-down 降级 |
 
-**当前累计**：277 个测试通过（默认套件）。
+**当前累计**：286 个测试通过（默认套件）。
 
 - `agent-runtime`：142 个测试 / 14 个文件（含 CLI 15、eval 9）
-- `extension`：107 个测试 / 21 个文件（controller 11、settings 8、chat-view 20、timeline 5、context 5、webview-ui 6、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、skills-* 27、knowledge-* 11、bundle 1）
+- `extension`：116 个测试 / 23 个文件（controller 11、settings 8、chat-view 20、timeline 5、context 5、webview-ui 6、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、skills-* 27、knowledge-* 20、bundle 1）
 - `knowledge-server`：19 个测试（Node test runner + 真实 HTTP）
 - `skill-server`：9 个测试（Node test runner）
 - 另有 1 个真实 Codex 集成测试（`V2_E2E=1` 手动运行）已通过。
@@ -647,17 +647,20 @@ npm run verify   # build + vitest + check-boundaries
   redaction、FTS 触发器、显式 `chunk_rowid`（VACUUM 安全）。
 - 检索：quoted FTS terms、AND→OR 重试、中文 <3 码点 `instr` fallback、
   path/extension/sensitivity 过滤、snippet、citation 行号。
-- Extension：`src/knowledge/{types,client,scanner,formatter,settings}.ts`、
+- Extension：`src/knowledge/{types,client,scanner,formatter,settings,proposals,capture,provider,remote-provider}.ts`、
   `knowledge-commands.ts`；设置页「知识」Tab；Reindex/Search/Status/Token 命令；
   `<knowledge>` 注入到 `TurnInput.context`；回答下方 citation chips + 文件行跳转。
+- **Local 知识沉淀**：Webview「知识」面板 + 内置 capture workflow；proposal
+  存 globalStorage，pending → 编辑 → approve 后以 `source: conversation` 发布；
+  Remote proposal 客户端/provider 接口已定义，服务端 API 待实现。
 - 失败降级：Knowledge server 不可达时只 warning，turn 继续。
 
 **测试**
 
 - `knowledge-server`：19 passed（chunk、FTS 触发器/VACUUM/reindex、CJK fallback、
   redaction/secret、collection/filter、HTTP auth/upsert/search/audit）。
-- `extension`：107 passed / 1 skipped（新增 knowledge client/scanner/formatter、
-  chat-view citation injection）。
+- `extension`：116 passed / 1 skipped（knowledge client/scanner/formatter、
+  proposals、capture、chat-view citation/panel）。
 - 回归：runtime 142、skill-server 9。
 
 **已知限制**

@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { existsSync } from 'node:fs';
+import { userInfo } from 'node:os';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import * as vscode from 'vscode';
 import type {
   HostToWebview,
@@ -11,8 +13,22 @@ import type {
 import { buildContextText } from './context';
 import { RuntimeController } from './controller';
 import { evaluateApprovalPolicy } from './file-policy';
+import {
+  buildCapturePrompt,
+  buildCaptureTranscript,
+  CaptureTurnUi,
+  parseCaptureResponse,
+} from './knowledge/capture';
 import { KnowledgeServerClient } from './knowledge/client';
 import { formatKnowledge } from './knowledge/formatter';
+import {
+  createLocalProposal,
+  listLocalProposalSummaries,
+  localProposalContentPath,
+  markLocalProposalPublished,
+  readLocalProposal,
+  setLocalProposalStatus,
+} from './knowledge/proposals';
 import {
   collectionForWorkspace,
   knowledgeServerTokenKey,
@@ -99,6 +115,8 @@ interface ChatSession {
   skillUsage?: SkillUsage[];
   /** Knowledge citations to attach to the next turn.start event. */
   pendingKnowledge?: KnowledgeTurnInfo;
+  /** Last turn id, used as proposal provenance. */
+  lastTurnId?: string;
   toolDetails: Map<string, ToolDetail>;
   /** Current reasoning summary buffer; only the final text is persisted. */
   reasoningBuffer: string;
@@ -338,6 +356,229 @@ export class ChatViewProvider
       // Focus is best effort; the message below still opens the panel.
     }
     this.post({ type: 'settings.open' });
+  }
+
+  private postKnowledgeProposals(): void {
+    this.post({
+      type: 'knowledge.proposals',
+      proposals: listLocalProposalSummaries(
+        this.context.globalStorageUri.fsPath
+      ),
+    });
+  }
+
+  async openKnowledge(): Promise<void> {
+    try {
+      await vscode.commands.executeCommand('agentbox.chat.focus');
+    } catch {
+      // Focus is best effort; the message below still opens the panel.
+    }
+    this.postKnowledgeProposals();
+    this.post({ type: 'knowledge.open' });
+  }
+
+  /**
+   * Built-in knowledge capture workflow. It runs a separate capture runtime on
+   * the latest turn, asks the model to compress it into a proposal, and stores
+   * the result locally for the user to review. It never publishes directly.
+   */
+  async captureKnowledge(): Promise<void> {
+    if (this.busy || this.isExternalBusy()) {
+      this.post({
+        type: 'error',
+        message: '请先停止正在运行的 turn 再沉淀知识。',
+      });
+      return;
+    }
+    const session = this.activeSession;
+    const root = this.currentRoot();
+    if (root === undefined) {
+      this.post({ type: 'error', message: '请先打开一个工作区文件夹。' });
+      return;
+    }
+    const transcript = buildCaptureTranscript(session.events);
+    if (transcript.text === '' || transcript.assistantText === '') {
+      this.post({
+        type: 'log',
+        text: '当前会话还没有可沉淀的 assistant 回答。',
+      });
+      return;
+    }
+
+    const ui = new CaptureTurnUi();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let controller: RuntimeController | undefined;
+    try {
+      const bundle = await createAgentRuntime(this.context, root);
+      controller = new RuntimeController({
+        runtime: bundle.runtime,
+        workspaceRoot: root,
+        limits: bundle.limits,
+        ui,
+        approvalPolicy: () => ({ decision: 'deny' }),
+      });
+      await controller.start();
+      const handle = await controller.runTurn(
+        buildCapturePrompt(),
+        transcript.text,
+        {
+          source: 'knowledge-capture',
+          sessionId: session.id,
+          ...(session.lastTurnId !== undefined
+            ? { turnId: session.lastTurnId }
+            : {}),
+        }
+      );
+      if (handle === null) {
+        throw new Error(ui.error ?? 'capture turn did not start');
+      }
+      await Promise.race([
+        ui.done,
+        new Promise<void>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('知识沉淀超时（60s）')),
+            60_000
+          );
+        }),
+      ]);
+
+      let payload = parseCaptureResponse(ui.text);
+      if (payload === undefined) {
+        // Fallback: keep the current answer editable instead of losing it.
+        const title =
+          transcript.userText.split('\n')[0]?.trim().slice(0, 120) ||
+          '未命名知识提案';
+        payload = {
+          title,
+          summary: transcript.assistantText.slice(0, 500),
+          content: transcript.assistantText,
+          tags: [],
+          sensitivity: 'internal',
+        };
+      }
+      if (payload.sensitivity === 'secret') {
+        throw new Error('捕获内容被标记为 secret，拒绝写入本地知识提案。');
+      }
+      const proposal = createLocalProposal(this.context.globalStorageUri.fsPath, {
+        ...payload,
+        content: payload.content.slice(0, 40_000),
+        author: userInfo().username || process.env.USERNAME || 'local',
+        provenance: {
+          sessionId: session.id,
+          ...(session.lastTurnId !== undefined
+            ? { turnId: session.lastTurnId }
+            : {}),
+          workspace: root,
+          agent: this.runtimeId,
+        },
+      });
+      this.postKnowledgeProposals();
+      this.post({
+        type: 'log',
+        text: `已生成知识提案《${proposal.title}》，请审核后再发布。`,
+      });
+      await this.openKnowledge();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`[knowledge] capture failed: ${message}`);
+      this.post({ type: 'error', message: `知识沉淀失败：${message}` });
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      await controller?.dispose();
+    }
+  }
+
+  async approveKnowledgeProposal(id: string): Promise<void> {
+    const proposal = readLocalProposal(this.context.globalStorageUri.fsPath, id);
+    if (proposal === undefined) {
+      this.post({ type: 'error', message: '找不到该知识提案。' });
+      return;
+    }
+    if (proposal.sensitivity === 'secret') {
+      this.post({ type: 'error', message: 'secret 提案不能发布到知识库。' });
+      return;
+    }
+    const settings = readKnowledgeSettings();
+    if (settings.serverUrl === '') {
+      this.post({
+        type: 'error',
+        message: '请先在设置 → 知识中配置 Server URL，再发布提案。',
+      });
+      return;
+    }
+    const root = this.currentRoot();
+    if (root === undefined) {
+      this.post({ type: 'error', message: '请先打开一个工作区文件夹。' });
+      return;
+    }
+    try {
+      const token = await this.context.secrets.get(knowledgeServerTokenKey());
+      const client = new KnowledgeServerClient(
+        settings.serverUrl,
+        token?.trim() || undefined
+      );
+      const response = await client.upsert({
+        collection: collectionForWorkspace(root, settings),
+        source: 'conversation',
+        documents: [
+          {
+            path: `knowledge/${proposal.id}.md`,
+            title: proposal.title,
+            content: proposal.content,
+            sensitivity: proposal.sensitivity,
+            contentHash: proposal.contentHash,
+          },
+        ],
+      });
+      const result = response.results[0];
+      if (result?.status === 'error' || result?.docId === undefined) {
+        throw new Error(result?.message ?? 'server rejected the proposal');
+      }
+      markLocalProposalPublished(
+        this.context.globalStorageUri.fsPath,
+        proposal.id,
+        result.docId
+      );
+      this.postKnowledgeProposals();
+      this.post({
+        type: 'log',
+        text: `知识提案《${proposal.title}》已发布。`,
+      });
+    } catch (error) {
+      this.post({
+        type: 'error',
+        message: `发布知识提案失败：${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      });
+    }
+  }
+
+  rejectKnowledgeProposal(id: string): void {
+    const updated = setLocalProposalStatus(
+      this.context.globalStorageUri.fsPath,
+      id,
+      'rejected',
+      userInfo().username || process.env.USERNAME || 'local'
+    );
+    if (updated !== undefined) {
+      this.postKnowledgeProposals();
+      this.post({ type: 'log', text: `已拒绝知识提案《${updated.title}》。` });
+    }
+  }
+
+  async editKnowledgeProposal(id: string): Promise<void> {
+    const proposal = readLocalProposal(this.context.globalStorageUri.fsPath, id);
+    if (proposal === undefined) return;
+    const path = localProposalContentPath(
+      this.context.globalStorageUri.fsPath,
+      proposal.id
+    );
+    if (!existsSync(path)) return;
+    const document = await vscode.workspace.openTextDocument(
+      vscode.Uri.file(path)
+    );
+    await vscode.window.showTextDocument(document, { preview: false });
   }
 
   private async readSettingsValues(): Promise<SettingsValues> {
@@ -819,6 +1060,7 @@ export class ChatViewProvider
             items: this.readSkillCatalog(),
           });
           void this.postSkillGroups();
+          this.postKnowledgeProposals();
           this.postState();
           this.postContext();
           if (this.pendingSettingsOpen) {
@@ -1054,6 +1296,36 @@ export class ChatViewProvider
 
         case 'knowledge.status':
           await vscode.commands.executeCommand('agentbox.knowledgeStatus');
+          return;
+
+        case 'knowledge.open':
+          await this.openKnowledge();
+          return;
+
+        case 'knowledge.refresh':
+          this.postKnowledgeProposals();
+          return;
+
+        case 'knowledge.capture':
+          await this.captureKnowledge();
+          return;
+
+        case 'knowledge.approve':
+          if (typeof raw.id === 'string') {
+            await this.approveKnowledgeProposal(raw.id);
+          }
+          return;
+
+        case 'knowledge.reject':
+          if (typeof raw.id === 'string') {
+            this.rejectKnowledgeProposal(raw.id);
+          }
+          return;
+
+        case 'knowledge.edit':
+          if (typeof raw.id === 'string') {
+            await this.editKnowledgeProposal(raw.id);
+          }
           return;
 
         case 'session.new':
@@ -1299,6 +1571,7 @@ export class ChatViewProvider
     let outgoing: SessionEvent = message;
 
     if (message.type === 'turn.start') {
+      session.lastTurnId = message.turnId;
       session.changedThisTurn.clear();
       session.reasoningBuffer = '';
       session.reasoningPending = '';
@@ -1550,6 +1823,43 @@ export class ChatViewProvider
     }
     if (path === '' || isAbsolute(path)) return;
 
+    if (path.startsWith('knowledge/')) {
+      const name = path.slice('knowledge/'.length);
+      if (!/^[A-Za-z0-9_-]+\.md$/.test(name)) return;
+      const local = join(
+        this.context.globalStorageUri.fsPath,
+        'agentbox',
+        'knowledge',
+        'proposals',
+        name
+      );
+      if (existsSync(local)) {
+        try {
+          const document = await vscode.workspace.openTextDocument(
+            vscode.Uri.file(local)
+          );
+          const editor = await vscode.window.showTextDocument(document, {
+            preview: true,
+          });
+          if (line !== undefined) {
+            const target = Math.min(
+              Math.max(1, Math.trunc(line)),
+              Math.max(1, document.lineCount)
+            );
+            const position = new vscode.Position(target - 1, 0);
+            editor.selection = new vscode.Selection(position, position);
+            editor.revealRange(
+              new vscode.Range(position, position),
+              vscode.TextEditorRevealType.InCenter
+            );
+          }
+          return;
+        } catch {
+          // Fall through to the normal workspace path.
+        }
+      }
+    }
+
     const absolute = resolve(root, path);
     if (toWorkspacePath(root, absolute) === undefined) return;
 
@@ -1615,6 +1925,9 @@ export class ChatViewProvider
       </div>
       <div class="meta"></div>
       <button id="open-editor" class="icon-button" title="在编辑器中打开（可拖动布局）" aria-label="在编辑器中打开">⧉</button>
+      <button id="knowledge" class="icon-button" title="知识提案" aria-label="知识提案">
+        <svg class="header-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3.2C6.6 2.4 4.9 2.2 3 2.5v10c1.9-.3 3.6-.1 5 .7 1.4-.8 3.1-1 5-.7v-10c-1.9-.3-3.6-.1-5 .7Z"/><path d="M8 3.2v10"/></svg>
+      </button>
       <button id="skills" class="icon-button" title="技能" aria-label="技能">✦</button>
       <button id="settings" class="icon-button" title="设置" aria-label="设置">⚙</button>
     </header>
@@ -1878,6 +2191,19 @@ export class ChatViewProvider
         <button id="skills-folder" class="secondary" type="button">打开目录</button>
         <button id="skills-upload" class="secondary" type="button">上传</button>
         <button id="skills-sync" class="secondary" type="button">同步远程</button>
+      </div>
+    </aside>
+
+    <div id="knowledge-scrim" class="knowledge-scrim" hidden></div>
+    <aside id="knowledge-panel" class="knowledge-panel" role="dialog" aria-modal="true" aria-label="知识提案" hidden>
+      <div class="knowledge-header">
+        <span>知识提案</span>
+        <button id="knowledge-close" class="icon-button" title="关闭知识提案" aria-label="关闭知识提案">✕</button>
+      </div>
+      <div id="knowledge-list" class="knowledge-list"></div>
+      <div class="knowledge-actions">
+        <button id="knowledge-capture" class="primary" type="button">沉淀当前对话</button>
+        <button id="knowledge-refresh" class="secondary" type="button">刷新</button>
       </div>
     </aside>
   </div>

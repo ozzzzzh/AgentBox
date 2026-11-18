@@ -6,7 +6,10 @@ import type {
   SettingsValues,
   WebviewToHost,
 } from '../chat-protocol';
-import type { KnowledgeTurnInfo } from '../knowledge/types';
+import type {
+  KnowledgeProposalSummary,
+  KnowledgeTurnInfo,
+} from '../knowledge/types';
 import {
   TurnTimeline,
   type TimelineKind,
@@ -39,6 +42,7 @@ const newButton = byId<HTMLButtonElement>('new');
 const settingsButton = byId<HTMLButtonElement>('settings');
 const openEditorButton = byId<HTMLButtonElement>('open-editor');
 const skillsButton = byId<HTMLButtonElement>('skills');
+const knowledgeButton = byId<HTMLButtonElement>('knowledge');
 const sessionBar = byId<HTMLElement>('session-bar');
 const statusLine = byId<HTMLElement>('status');
 const skillBar = byId<HTMLElement>('skill-bar');
@@ -124,6 +128,7 @@ interface SkillGroupInfo {
 
 let skillGroups: SkillGroupInfo[] = [];
 let skillCategory = 'all';
+let knowledgeProposals: KnowledgeProposalSummary[] = [];
 
 const skillsPanel = byId<HTMLElement>('skills-panel');
 const skillsScrim = byId<HTMLElement>('skills-scrim');
@@ -134,6 +139,13 @@ const skillsCreate = byId<HTMLButtonElement>('skills-create');
 const skillsFolder = byId<HTMLButtonElement>('skills-folder');
 const skillsUpload = byId<HTMLButtonElement>('skills-upload');
 const skillsSync = byId<HTMLButtonElement>('skills-sync');
+
+const knowledgePanel = byId<HTMLElement>('knowledge-panel');
+const knowledgeScrim = byId<HTMLElement>('knowledge-scrim');
+const knowledgeClose = byId<HTMLButtonElement>('knowledge-close');
+const knowledgeList = byId<HTMLElement>('knowledge-list');
+const knowledgeCapture = byId<HTMLButtonElement>('knowledge-capture');
+const knowledgeRefresh = byId<HTMLButtonElement>('knowledge-refresh');
 
 const timelineEl = byId<HTMLElement>('timeline');
 const timelineSummary = byId<HTMLElement>('timeline-summary');
@@ -1704,6 +1716,15 @@ function handleMessage(message: HostToWebview): void {
       showSettingsError(message.message);
       return;
 
+    case 'knowledge.proposals':
+      knowledgeProposals = message.proposals;
+      if (!knowledgePanel.hidden) renderKnowledgeProposals();
+      return;
+
+    case 'knowledge.open':
+      openKnowledgePanel();
+      return;
+
     case 'user.message':
       addUserMessage(message.text);
       return;
@@ -1963,6 +1984,7 @@ function renderSkillGroups(): void {
 
 function openSettingsPanel(): void {
   if (!skillsPanel.hidden) closeSkillsPanel();
+  if (!knowledgePanel.hidden) closeKnowledgePanel();
   clearSettingsError();
   selectSettingsTab('model');
   settingsPanel.hidden = false;
@@ -1980,6 +2002,7 @@ function closeSettingsPanel(): void {
 
 function openSkillsPanel(): void {
   if (!settingsPanel.hidden) closeSettingsPanel();
+  if (!knowledgePanel.hidden) closeKnowledgePanel();
   skillsPanel.hidden = false;
   skillsScrim.hidden = false;
   post({ type: 'skills.open' });
@@ -1989,6 +2012,94 @@ function openSkillsPanel(): void {
 function closeSkillsPanel(): void {
   skillsPanel.hidden = true;
   skillsScrim.hidden = true;
+  input.focus();
+}
+
+function knowledgeStatusLabel(status: KnowledgeProposalSummary['status']): string {
+  if (status === 'pending') return '待审核';
+  if (status === 'approved') return '已通过';
+  if (status === 'rejected') return '已拒绝';
+  return '已发布';
+}
+
+function renderKnowledgeProposals(): void {
+  knowledgeList.replaceChildren();
+  if (knowledgeProposals.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'knowledge-empty';
+    empty.textContent = '还没有知识提案。完成一轮对话后点击“沉淀当前对话”。';
+    knowledgeList.appendChild(empty);
+    return;
+  }
+  for (const proposal of knowledgeProposals) {
+    const item = document.createElement('div');
+    item.className = `knowledge-item ${proposal.status}`;
+
+    const title = document.createElement('div');
+    title.className = 'knowledge-item-title';
+    title.textContent = proposal.title;
+
+    const meta = document.createElement('div');
+    meta.className = 'knowledge-item-meta';
+    const date = new Date(proposal.createdAt);
+    meta.textContent = `${knowledgeStatusLabel(proposal.status)} · ${
+      Number.isNaN(date.getTime()) ? proposal.createdAt : date.toLocaleString()
+    }${proposal.tags.length > 0 ? ` · ${proposal.tags.join(', ')}` : ''}`;
+
+    const summary = document.createElement('div');
+    summary.className = 'knowledge-item-summary';
+    summary.textContent = proposal.summary || '（无摘要）';
+
+    const actions = document.createElement('div');
+    actions.className = 'knowledge-item-actions';
+
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'secondary';
+    edit.textContent = '编辑';
+    edit.addEventListener('click', () => {
+      post({ type: 'knowledge.edit', id: proposal.id });
+    });
+    actions.appendChild(edit);
+
+    if (proposal.status === 'pending') {
+      const approve = document.createElement('button');
+      approve.type = 'button';
+      approve.className = 'primary';
+      approve.textContent = '通过并发布';
+      approve.addEventListener('click', () => {
+        post({ type: 'knowledge.approve', id: proposal.id });
+      });
+      actions.appendChild(approve);
+
+      const reject = document.createElement('button');
+      reject.type = 'button';
+      reject.className = 'secondary';
+      reject.textContent = '拒绝';
+      reject.addEventListener('click', () => {
+        post({ type: 'knowledge.reject', id: proposal.id });
+      });
+      actions.appendChild(reject);
+    }
+
+    item.append(title, meta, summary, actions);
+    knowledgeList.appendChild(item);
+  }
+}
+
+function openKnowledgePanel(): void {
+  if (!settingsPanel.hidden) closeSettingsPanel();
+  if (!skillsPanel.hidden) closeSkillsPanel();
+  knowledgePanel.hidden = false;
+  knowledgeScrim.hidden = false;
+  renderKnowledgeProposals();
+  post({ type: 'knowledge.refresh' });
+  knowledgeClose.focus();
+}
+
+function closeKnowledgePanel(): void {
+  knowledgePanel.hidden = true;
+  knowledgeScrim.hidden = true;
   input.focus();
 }
 
@@ -2310,6 +2421,11 @@ skillsCreate.addEventListener('click', () => post({ type: 'skills.create' }));
 skillsFolder.addEventListener('click', () => post({ type: 'skills.openFolder' }));
 skillsUpload.addEventListener('click', () => post({ type: 'skills.upload' }));
 skillsSync.addEventListener('click', () => post({ type: 'skills.sync' }));
+knowledgeButton.addEventListener('click', openKnowledgePanel);
+knowledgeClose.addEventListener('click', closeKnowledgePanel);
+knowledgeScrim.addEventListener('click', closeKnowledgePanel);
+knowledgeCapture.addEventListener('click', () => post({ type: 'knowledge.capture' }));
+knowledgeRefresh.addEventListener('click', () => post({ type: 'knowledge.refresh' }));
 timelineEl.addEventListener('mouseleave', hideTimelineTooltip);
 timelineToggle.addEventListener('click', toggleTimeline);
 transcript.addEventListener('scroll', scheduleQuestionNav);

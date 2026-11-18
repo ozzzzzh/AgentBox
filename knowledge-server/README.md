@@ -37,6 +37,11 @@ Then configure the extension:
 
 Run **AgentBox: Reindex Knowledge** once, then **AgentBox: Search Knowledge**.
 
+Local knowledge capture publishes approved proposals with
+`source: "conversation"` through the same documents endpoint. Proposal/review
+API for remote servers is defined in the extension client but not implemented
+on the server yet.
+
 ## Production-style run
 
 ```powershell

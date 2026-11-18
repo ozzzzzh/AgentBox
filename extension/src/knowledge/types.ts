@@ -16,7 +16,7 @@ export interface DocumentInput {
 export interface UpsertRequest {
   apiVersion?: number;
   collection: string;
-  source?: 'workspace' | 'repo' | 'upload' | 'connector';
+  source?: 'workspace' | 'repo' | 'upload' | 'connector' | 'conversation';
   documents: DocumentInput[];
   removedPaths?: string[];
   force?: boolean;
@@ -143,6 +143,69 @@ export interface StatusResponse {
   lastIndexedAt: string | null;
   dbBytes: number;
   fts: { tokenizer: 'trigram'; available: true };
+}
+
+export type KnowledgeProposalStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'published';
+
+export interface KnowledgeProposalProvenance {
+  sessionId?: string;
+  turnId?: string;
+  messageId?: string;
+  workspace?: string;
+  agent?: string;
+}
+
+export interface KnowledgeProposal {
+  id: string;
+  kind: 'knowledge';
+  status: KnowledgeProposalStatus;
+  title: string;
+  summary: string;
+  content: string;
+  tags: string[];
+  sensitivity: Sensitivity;
+  source: 'conversation';
+  target: 'local' | 'remote';
+  provenance: KnowledgeProposalProvenance;
+  author: string;
+  reviewer?: string;
+  contentHash: string;
+  createdAt: string;
+  reviewedAt?: string;
+  publishedDocId?: string;
+}
+
+export interface KnowledgeProposalInput {
+  title: string;
+  summary: string;
+  content: string;
+  tags?: string[];
+  sensitivity?: Sensitivity;
+  target?: 'local' | 'remote';
+  provenance?: KnowledgeProposalProvenance;
+  author: string;
+}
+
+export interface KnowledgeProposalPatch {
+  title?: string;
+  summary?: string;
+  content?: string;
+  tags?: string[];
+  sensitivity?: Sensitivity;
+}
+
+export interface KnowledgeProposalSummary {
+  id: string;
+  status: KnowledgeProposalStatus;
+  title: string;
+  summary: string;
+  tags: string[];
+  createdAt: string;
+  reviewedAt?: string;
 }
 
 export interface AuditEntry {

@@ -26,7 +26,12 @@ export const LIMITS = {
 } as const;
 
 export type Sensitivity = 'public' | 'internal' | 'secret';
-export type DocumentSource = 'workspace' | 'repo' | 'upload' | 'connector';
+export type DocumentSource =
+  | 'workspace'
+  | 'repo'
+  | 'upload'
+  | 'connector'
+  | 'conversation';
 export type ChunkKind = 'markdown' | 'code' | 'sql' | 'text';
 
 export interface DocumentInput {

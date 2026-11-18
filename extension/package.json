@@ -22,7 +22,9 @@
     "onCommand:agentbox.reindexKnowledge",
     "onCommand:agentbox.searchKnowledge",
     "onCommand:agentbox.knowledgeStatus",
-    "onCommand:agentbox.setKnowledgeServerToken"
+    "onCommand:agentbox.setKnowledgeServerToken",
+    "onCommand:agentbox.captureKnowledge",
+    "onCommand:agentbox.knowledgeProposals"
   ],
   "contributes": {
     "viewsContainers": {
@@ -169,6 +171,18 @@
         "command": "agentbox.knowledgeSettings",
         "title": "AgentBox: Knowledge Settings",
         "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.captureKnowledge",
+        "title": "AgentBox: Capture Knowledge",
+        "category": "AgentBox",
+        "icon": "$(book)"
+      },
+      {
+        "command": "agentbox.knowledgeProposals",
+        "title": "AgentBox: Knowledge Proposals",
+        "category": "AgentBox",
+        "icon": "$(book)"
       },
       {
         "command": "agentbox.configure",

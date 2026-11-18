@@ -114,10 +114,12 @@ describe('bundled extension', () => {
 
         expect([...commands.keys()].sort()).toEqual([
           'agentbox.cancelTurn',
+          'agentbox.captureKnowledge',
           'agentbox.clearApiKey',
           'agentbox.configure',
           'agentbox.createSkill',
           'agentbox.focusSidebar',
+          'agentbox.knowledgeProposals',
           'agentbox.knowledgeSettings',
           'agentbox.knowledgeStatus',
           'agentbox.openChat',

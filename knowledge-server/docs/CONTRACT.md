@@ -67,6 +67,8 @@ Errors use the same envelope as the Skill server:
 - `removedPaths` is idempotent and processed before upserts.
 - Partial success returns HTTP 200 with `errors[]` and `results[]`.
 - The server recomputes `content_hash`; `contentHash` is advisory only.
+- `source` may be `workspace`, `repo`, `upload`, `connector`, or `conversation`.
+  Local capture proposals publish with `source: "conversation"`.
 - `sensitivity=secret` and well-known secret file names are skipped.
 - Paths are workspace-relative POSIX, with no `..`, no absolute paths and no
   NUL. Backslashes are normalized to `/`.

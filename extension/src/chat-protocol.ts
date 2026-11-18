@@ -2,7 +2,10 @@ import type {
   ApprovalDecision,
   StopReason,
 } from '@agentbox/runtime';
-import type { KnowledgeTurnInfo } from './knowledge/types';
+import type {
+  KnowledgeProposalSummary,
+  KnowledgeTurnInfo,
+} from './knowledge/types';
 import type { SkillCatalogItem } from './skills/catalog';
 import type { ClientGroupInfo } from './skills/client';
 import type { SkillUsage } from './skills/model';
@@ -118,6 +121,8 @@ export type HostToWebview =
   | { type: 'skills'; skills: SkillUsage[] }
   | { type: 'skills.catalog'; items: SkillCatalogItem[] }
   | { type: 'skills.groups'; groups: ClientGroupInfo[] }
+  | { type: 'knowledge.proposals'; proposals: KnowledgeProposalSummary[] }
+  | { type: 'knowledge.open' }
   | { type: 'context'; context: ContextInfo }
   | { type: 'settings'; values: SettingsValues }
   | { type: 'settings.open' }
@@ -158,6 +163,12 @@ export type WebviewToHost =
   | { type: 'knowledge.reindex' }
   | { type: 'knowledge.search' }
   | { type: 'knowledge.status' }
+  | { type: 'knowledge.open' }
+  | { type: 'knowledge.refresh' }
+  | { type: 'knowledge.capture' }
+  | { type: 'knowledge.approve'; id: string }
+  | { type: 'knowledge.reject'; id: string }
+  | { type: 'knowledge.edit'; id: string }
   | { type: 'session.new' }
   | { type: 'session.select'; id: string }
   | { type: 'session.close'; id: string; confirm: boolean };
