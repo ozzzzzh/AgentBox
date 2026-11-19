@@ -41,7 +41,7 @@
 cd extension
 npm install
 npm run build      # 构建 runtime + typecheck + esbuild（extension + webview）
-npm test           # 116 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / knowledge-* / bundle）
+npm test           # 117 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / knowledge-* / bundle）
 npm run verify
 ```
 

@@ -323,6 +323,44 @@ describe('ChatViewProvider', () => {
     });
   });
 
+  it('keeps selection context when focus moves into the webview', () => {
+    const file = join(workspaceRoot, 'src', 'a.ts');
+    state.activeTextEditor = {
+      document: {
+        uri: { scheme: 'file', fsPath: file },
+        languageId: 'typescript',
+        getText: () => 'const a = 1;',
+        isClosed: false,
+      },
+      selection: {
+        isEmpty: false,
+        start: { line: 1 },
+        end: { line: 2 },
+      },
+    };
+    resolveView();
+    state.receiveHandler?.({ type: 'ready' });
+
+    // Clicking into the chat webview makes VS Code report no active editor.
+    state.activeTextEditor = undefined;
+    state.receiveHandler?.({ type: 'ready' });
+
+    const contexts = state.messages.filter(
+      (message) => message.type === 'context'
+    );
+    expect(contexts.at(-1)).toEqual({
+      type: 'context',
+      context: {
+        file: 'src/a.ts',
+        selection: {
+          startLine: 2,
+          endLine: 3,
+          preview: 'const a = 1;',
+        },
+      },
+    });
+  });
+
   it('rejects a prompt without a workspace', () => {
     state.workspaceFolders = undefined;
     resolveView();

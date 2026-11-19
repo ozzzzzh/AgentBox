@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -59,7 +60,26 @@ function atomicWrite(path: string, content: string): void {
   mkdirSync(proposalDirFromPath(path), { recursive: true });
   const temp = `${path}.tmp`;
   writeFileSync(temp, content, 'utf8');
-  renameSync(temp, path);
+  try {
+    renameSync(temp, path);
+  } catch (error) {
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code)
+        : '';
+    // Windows can transiently lock the destination (indexer/AV). Fall back to
+    // an in-place write rather than losing the proposal update.
+    if (code === 'EPERM' || code === 'EACCES' || code === 'EBUSY' || code === 'EEXIST') {
+      writeFileSync(path, content, 'utf8');
+      try {
+        rmSync(temp, { force: true });
+      } catch {
+        // Best effort cleanup.
+      }
+      return;
+    }
+    throw error;
+  }
 }
 
 function proposalDirFromPath(path: string): string {

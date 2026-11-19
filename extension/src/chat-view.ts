@@ -169,6 +169,12 @@ export class ChatViewProvider
   private startingSession = false;
   private cancelRequested = false;
   private pendingSettingsOpen = false;
+  /**
+   * The last file editor used as context. When the webview gets focus VS Code
+   * can report no active text editor; keep the selection context alive until
+   * the editor is actually closed or another file is selected.
+   */
+  private lastContextEditor: vscode.TextEditor | undefined;
   private readonly disposables: vscode.Disposable[] = [];
   private readonly output: vscode.OutputChannel;
 
@@ -186,6 +192,7 @@ export class ChatViewProvider
       vscode.window.onDidChangeActiveTextEditor(() => this.postContext()),
       vscode.window.onDidChangeTextEditorSelection(() => this.postContext()),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.lastContextEditor = undefined;
         const root = this.currentRoot();
         if (root !== this.activeSession.root) {
           void this.reset();
@@ -1411,13 +1418,41 @@ export class ChatViewProvider
     this.postContext();
   }
 
+  /**
+   * Prefer the actual active file editor, but fall back to the last valid one
+   * when focus moved into the webview (VS Code may report undefined). This is
+   * what keeps the selection toggle and TurnInput context from being cleared
+   * merely by clicking into the chat box.
+   */
+  private contextEditor(): vscode.TextEditor | undefined {
+    const active = vscode.window.activeTextEditor;
+    if (active !== undefined) {
+      if (active.document.uri.scheme === 'file') {
+        this.lastContextEditor = active;
+        return active;
+      }
+      return undefined;
+    }
+    // Only fall back when there is no active editor at all (webview focus).
+    // Switching to a non-file editor intentionally clears file context.
+    const last = this.lastContextEditor;
+    if (
+      last !== undefined &&
+      last.document.uri.scheme === 'file' &&
+      last.document.isClosed !== true
+    ) {
+      return last;
+    }
+    return undefined;
+  }
+
   private buildActiveContext(
     root: string,
     includeFile: boolean,
     includeSelection: boolean
   ): string | undefined {
-    const editor = vscode.window.activeTextEditor;
-    if (editor === undefined || editor.document.uri.scheme !== 'file') {
+    const editor = this.contextEditor();
+    if (editor === undefined) {
       return undefined;
     }
 
@@ -1503,8 +1538,8 @@ export class ChatViewProvider
 
   private postContext(): void {
     if (this.surfaces.length === 0) return;
-    const editor = vscode.window.activeTextEditor;
-    if (editor === undefined || editor.document.uri.scheme !== 'file') {
+    const editor = this.contextEditor();
+    if (editor === undefined) {
       this.post({ type: 'context', context: {} });
       return;
     }
