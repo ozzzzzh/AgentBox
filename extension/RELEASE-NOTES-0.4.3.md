@@ -28,7 +28,7 @@
 - macOS 安装说明合并进根目录 `README.md`。
 - 新增 `media/SETUP.md`，随 VSIX 提供安装与排查指引。
 - 根 README 精简，架构调整为快速开始之后。
-- 根 README 新增实体关系图和分层架构图（L1–L4）。
+- 根 README 预留架构图占位，待补充最终架构图。
 
 ## 安装
 

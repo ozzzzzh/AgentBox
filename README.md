@@ -155,79 +155,11 @@ macOS 文件位置：
 
 ## 2. 架构简述
 
-### 2.1 实体关系
+### 2.1 架构图（占位）
 
-```mermaid
-flowchart LR
-  User["用户"] -->|prompt / approval| Webview["VS Code Webview"]
-  Webview -->|postMessage| Chat["ChatViewProvider"]
-  Chat -->|runTurn| Controller["RuntimeController"]
-  Chat -->|build context| Context["ContextAssembler"]
-  Context -->|read skills| SkillClient["SkillClient"]
-  Context -->|search top-k| KnowledgeClient["KnowledgeClient"]
-  Controller -->|start / abort| Runtime["AgentRuntime"]
-  Runtime -->|adapter| Codex["CodexRuntime"]
-  Codex -->|stdio JSON-RPC| AppServer["codex app-server"]
-  AppServer -->|Responses API| Model["LLM Provider"]
-  AppServer -.->|tool / approval events| Codex
-  Codex -.->|AgentEvent| Controller
-  Controller -.->|UI events| Webview
-  SkillClient -->|HTTP| SkillServer["skill-server :4770"]
-  SkillServer -->|index / policies| SkillData["Skill Data"]
-  KnowledgeClient -->|local| LocalKB["Local Knowledge (globalStorage)"]
-  KnowledgeClient -->|HTTP| KnowledgeServer["knowledge-server :4771"]
-  KnowledgeServer -->|FTS5| SQLite["SQLite knowledge.db"]
-  Chat -->|capture turn| Capture["Knowledge Capture"]
-  Capture -->|pending| Proposal["Local Proposal"]
-  Proposal -->|approve local| LocalKB
-  Proposal -->|approve server| KnowledgeServer
-```
+![AgentBox 架构图占位](docs/images/architecture-placeholder.svg)
 
-### 2.2 分层架构
-
-```mermaid
-flowchart BT
-  subgraph L1["L1 模型与执行环境"]
-    direction LR
-    Model["LLM Provider"]
-    AppServer["codex app-server"]
-    Shell["PowerShell / sandbox"]
-    Workspace["Workspace files"]
-  end
-
-  subgraph L2["L2 Runtime 契约"]
-    direction LR
-    AgentRuntime["AgentRuntime"]
-    CodexRuntime["CodexRuntime"]
-    FakeRuntime["FakeRuntime"]
-    Controller["RuntimeController"]
-  end
-
-  subgraph L3["L3 上下文与产品体验"]
-    direction LR
-    Webview["VS Code Webview"]
-    ChatView["ChatViewProvider"]
-    Context["ContextAssembler"]
-    SkillClient["SkillClient"]
-    KnowledgeClient["KnowledgeClient"]
-  end
-
-  subgraph L4["L4 知识资产与外部服务"]
-    direction LR
-    LocalSkill["Local Skills"]
-    SkillServer["Skill Server"]
-    LocalKB["Local Knowledge"]
-    KnowledgeServer["Knowledge Server"]
-  end
-
-  L1 --> L2 --> L3 --> L4
-```
-
-- **L1**：模型调用、Codex 进程、PowerShell/sandbox、workspace 文件；
-- **L2**：`AgentRuntime` 契约、Codex adapter、FakeRuntime、Turn/事件控制；
-- **L3**：Webview、ChatView、ContextAssembler、Skill/Knowledge 客户端；
-- **L4**：本地/远程 Skill 与 Knowledge 资产；
-- **跨层**：SecretStorage、审批、沙箱、审计、脱敏。
+> 架构图待补充；详细组件与时序见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 核心边界：
 

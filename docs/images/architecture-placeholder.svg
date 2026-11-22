@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="360" viewBox="0 0 960 360" role="img" aria-labelledby="title desc">
+  <title id="title">AgentBox 架构图占位</title>
+  <desc id="desc">待补充的系统架构图占位图</desc>
+  <rect x="17" y="17" width="926" height="326" rx="12" fill="#f5f7fa" stroke="#9aa7b4" stroke-width="2" stroke-dasharray="10 7"/>
+  <text x="480" y="154" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="28" font-weight="600" fill="#334155">AgentBox Architecture</text>
+  <text x="480" y="194" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="17" fill="#64748b">架构图占位 · 待补充</text>
+  <text x="480" y="230" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#94a3b8">Replace this image with the final architecture diagram.</text>
+</svg>
