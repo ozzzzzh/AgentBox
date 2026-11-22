@@ -1384,7 +1384,8 @@ button:disabled {
 .settings-scrim {
   position: absolute;
   inset: 0;
-  z-index: 30;
+  /* Modal layers must stay above the topbar, otherwise the header overlaps. */
+  z-index: 60;
   background: rgba(0, 0, 0, 0.35);
 }
 
@@ -1392,7 +1393,7 @@ button:disabled {
   position: absolute;
   top: 50%;
   left: 50%;
-  z-index: 31;
+  z-index: 61;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -1706,7 +1707,7 @@ button:disabled {
 .skills-scrim {
   position: absolute;
   inset: 0;
-  z-index: 30;
+  z-index: 60;
   background: rgba(0, 0, 0, 0.28);
 }
 
@@ -1715,7 +1716,7 @@ button:disabled {
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 31;
+  z-index: 61;
   display: flex;
   flex-direction: column;
   width: min(92%, 380px);
@@ -1890,7 +1891,7 @@ button:disabled {
 .knowledge-scrim {
   position: absolute;
   inset: 0;
-  z-index: 30;
+  z-index: 60;
   background: rgba(0, 0, 0, 0.28);
 }
 
@@ -1899,7 +1900,7 @@ button:disabled {
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 31;
+  z-index: 61;
   display: flex;
   flex-direction: column;
   width: min(92%, 420px);
@@ -2032,7 +2033,7 @@ button:disabled {
 .setup-scrim {
   position: absolute;
   inset: 0;
-  z-index: 40;
+  z-index: 60;
   background: rgba(0, 0, 0, 0.45);
 }
 
@@ -2040,7 +2041,7 @@ button:disabled {
   position: absolute;
   top: 58px;
   left: 50%;
-  z-index: 45;
+  z-index: 61;
   display: flex;
   flex-direction: column;
   width: min(92%, 440px);

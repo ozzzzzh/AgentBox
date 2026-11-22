@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
@@ -465,6 +466,34 @@ describe('ChatViewProvider', () => {
     expect(webview.html).toContain('id="skill-bar"');
     expect(webview.html).toContain('id="skills-panel"');
     expect(webview.html).toContain('id="skills"');
+  });
+
+  it('keeps modal overlays above the topbar', () => {
+    const css = readFileSync(
+      fileURLToPath(new URL('../media/chat.css', import.meta.url)),
+      'utf8'
+    );
+    const zIndexOf = (selector: string): number => {
+      const block = css.match(
+        new RegExp(`\\.${selector}\\s*\\{([^}]*)\\}`, 's')
+      )?.[1];
+      return Number(block?.match(/z-index:\s*(\d+)/)?.[1]);
+    };
+
+    const topbar = zIndexOf('topbar');
+    expect(topbar).toBeGreaterThan(0);
+    for (const selector of [
+      'settings-scrim',
+      'settings-panel',
+      'skills-scrim',
+      'skills-panel',
+      'knowledge-scrim',
+      'knowledge-panel',
+      'setup-scrim',
+      'setup-panel',
+    ]) {
+      expect(zIndexOf(selector), selector).toBeGreaterThan(topbar);
+    }
   });
 
   it('opens the in-panel settings overlay', async () => {
