@@ -155,13 +155,19 @@ macOS 文件位置：
 
 ## 2. 架构简述
 
-```text
-VS Code Webview
-  → ChatViewProvider
-      ├─ ContextAssembler → SkillClient / KnowledgeClient
-      ├─ RuntimeController → AgentRuntime → Codex app-server
-      ├─ SkillClient → skill-server :4770
-      └─ KnowledgeClient → local globalStorage / knowledge-server :4771
+```mermaid
+flowchart LR
+  Webview["VS Code Webview"] --> Chat["ChatViewProvider"]
+  Chat --> Context["ContextAssembler"]
+  Chat --> Controller["RuntimeController"]
+  Context --> Skill["SkillClient"]
+  Context --> Knowledge["KnowledgeClient"]
+  Controller --> Runtime["AgentRuntime"]
+  Runtime --> Codex["Codex app-server"]
+  Codex --> Model["LLM Provider"]
+  Skill --> SkillServer["skill-server :4770"]
+  Knowledge --> Local["local globalStorage"]
+  Knowledge --> KServer["knowledge-server :4771"]
 ```
 
 核心边界：
