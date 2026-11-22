@@ -42,12 +42,10 @@ const sendIcon = byId<SVGElement>('icon-send');
 const stopIcon = byId<SVGElement>('icon-stop');
 const newButton = byId<HTMLButtonElement>('new');
 const settingsButton = byId<HTMLButtonElement>('settings');
-const openEditorButton = byId<HTMLButtonElement>('open-editor');
 const setupGuideButton = byId<HTMLButtonElement>('setup-guide');
 const skillsButton = byId<HTMLButtonElement>('skills');
 const knowledgeButton = byId<HTMLButtonElement>('knowledge');
 const sessionBar = byId<HTMLElement>('session-bar');
-const statusLine = byId<HTMLElement>('status');
 const skillBar = byId<HTMLElement>('skill-bar');
 const mentionMenu = byId<HTMLElement>('mention-menu');
 const contextBar = byId<HTMLElement>('context-bar');
@@ -239,16 +237,8 @@ let turnTokens: number | null = null;
 let sessionTokens = 0;
 let timelineTimer: ReturnType<typeof setInterval> | null = null;
 let timelineHovering = false;
-let timelineCollapsed = (() => {
-  try {
-    const state = vscode.getState() as
-      | { timelineCollapsed?: boolean }
-      | undefined;
-    return state?.timelineCollapsed === true;
-  } catch {
-    return false;
-  }
-})();
+// The activity timeline starts collapsed; the toggle controls the current view.
+let timelineCollapsed = true;
 let currentAssistant: HTMLElement | null = null;
 let currentProcess: HTMLElement | null = null;
 let currentProcessSteps: HTMLElement | null = null;
@@ -1397,8 +1387,6 @@ function setBusy(next: boolean): void {
   sendIcon.toggleAttribute('hidden', next);
   stopIcon.toggleAttribute('hidden', !next);
   newButton.disabled = next;
-  statusLine.classList.toggle('busy', next);
-  statusLine.textContent = next ? '运行中…' : '空闲';
   if (!next) {
     if (timeline.running) {
       timeline.finish(Date.now());
@@ -1605,6 +1593,50 @@ function beginHold(button: HTMLButtonElement, id: string): void {
   }, 650);
 }
 
+function beginSessionRename(
+  wrap: HTMLElement,
+  tab: HTMLButtonElement,
+  summary: { id: string; title: string }
+): void {
+  if (wrap.querySelector('.session-rename-input') !== null) return;
+  const input = document.createElement('input');
+  input.className = 'session-rename-input';
+  input.value = summary.title;
+  input.maxLength = 80;
+  input.setAttribute('aria-label', '重命名会话');
+  tab.hidden = true;
+  wrap.insertBefore(input, tab);
+
+  let finished = false;
+  const finish = (commit: boolean): void => {
+    if (finished) return;
+    finished = true;
+    const title = input.value.replace(/\s+/g, ' ').trim().slice(0, 80);
+    input.remove();
+    tab.hidden = false;
+    if (commit && title !== '' && title !== summary.title) {
+      post({ type: 'session.rename', id: summary.id, title });
+    }
+  };
+
+  input.addEventListener('click', (event) => event.stopPropagation());
+  input.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      finish(true);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      finish(false);
+    }
+  });
+  input.addEventListener('blur', () => finish(true));
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
+}
+
 function renderSessionTabs(): void {
   cancelHold();
   sessionBar.replaceChildren();
@@ -1618,7 +1650,7 @@ function renderSessionTabs(): void {
     tab.type = 'button';
     tab.className = 'session-tab';
     tab.textContent = summary.title;
-    tab.title = summary.title;
+    tab.title = `${summary.title}（双击重命名）`;
     tab.setAttribute('role', 'tab');
     tab.setAttribute(
       'aria-selected',
@@ -1628,6 +1660,11 @@ function renderSessionTabs(): void {
       if (summary.id !== activeSessionId) {
         post({ type: 'session.select', id: summary.id });
       }
+    });
+    tab.addEventListener('dblclick', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      beginSessionRename(wrap, tab, summary);
     });
 
     const close = document.createElement('button');
@@ -2601,9 +2638,6 @@ submitButton.addEventListener('click', () => {
 newButton.addEventListener('click', () => {
   if (busy) return;
   post({ type: 'session.new' });
-});
-openEditorButton.addEventListener('click', () => {
-  post({ type: 'openEditor' });
 });
 setupGuideButton.addEventListener('click', openSetupPanel);
 clearApiKeyButton.addEventListener('click', () => {

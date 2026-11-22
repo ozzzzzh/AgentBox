@@ -1,4 +1,8 @@
-# AgentBox
+<p align="center">
+  <img src="extension/media/icons/agentbox.svg" width="96" height="96" alt="AgentBox logo" />
+</p>
+
+<h1 align="center">AgentBox</h1>
 
 AgentBox 是一个面向团队知识沉淀的 VS Code coding agent：
 
@@ -10,7 +14,7 @@ AgentBox 是一个面向团队知识沉淀的 VS Code coding agent：
 
 **知识资产层是护城河，coding agent 是可替换引擎。**
 
-当前版本：`extension@0.4.3`。
+当前版本：`extension@0.4.5`。
 
 ## 目录
 
@@ -30,7 +34,7 @@ AgentBox 是一个面向团队知识沉淀的 VS Code coding agent：
 ### 1.1 安装 VSIX
 
 ```bash
-code --install-extension /path/to/agentbox-0.4.3.vsix --force
+code --install-extension /path/to/agentbox-0.4.5.vsix --force
 ```
 
 安装后 Reload VS Code。
@@ -193,9 +197,11 @@ macOS 文件位置：
 ### 3.1 聊天
 
 - **AgentBox: Open Chat** 或活动栏 AgentBox；
+- 会话标签在顶部，右侧 **＋** 新建会话；双击标签可重命名；
+- 发送/停止按钮在输入框右侧同一栏；
 - Enter 发送，Shift+Enter 换行；
 - 审批卡片选择 **允许 / 拒绝**；
-- 运行中同一个按钮变为 **停止**。
+- 活动时间线默认折叠，点击右侧按钮展开。
 
 ### 3.2 上下文
 
@@ -250,7 +256,7 @@ npm run package
 产物：
 
 ```text
-extension/agentbox-0.4.3.vsix
+extension/agentbox-0.4.5.vsix
 ```
 
 常用验证：
@@ -319,7 +325,7 @@ failed to write json-RPC request process is not running
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 完整架构与时序
 - [extension/README.md](extension/README.md) — VSIX 配置、UI、全部命令
-- [extension/RELEASE-NOTES-0.4.3.md](extension/RELEASE-NOTES-0.4.3.md) — 当前版本改动
+- [extension/RELEASE-NOTES-0.4.5.md](extension/RELEASE-NOTES-0.4.5.md) — 当前版本改动
 - [agent-runtime/README.md](agent-runtime/README.md) — Runtime 设计
 - [agent-runtime/docs/HANDOFF.md](agent-runtime/docs/HANDOFF.md) — 交接与待决事项
 - [agent-runtime/docs/KNOWLEDGE-BASE.md](agent-runtime/docs/KNOWLEDGE-BASE.md) — Knowledge 设计

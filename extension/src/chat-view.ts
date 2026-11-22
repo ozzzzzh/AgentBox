@@ -240,6 +240,13 @@ export class ChatViewProvider
       }
     );
     this.panel = panel;
+    // Without an explicit iconPath VS Code shows the generic file icon on the tab.
+    panel.iconPath = vscode.Uri.joinPath(
+      this.extensionUri,
+      'media',
+      'icons',
+      'agentbox.svg'
+    );
     const surface = this.attachSurface(panel.webview);
     panel.onDidDispose(() => {
       surface.dispose();
@@ -1590,6 +1597,18 @@ export class ChatViewProvider
           }
           return;
 
+        case 'session.rename': {
+          if (typeof raw.id !== 'string' || typeof raw.title !== 'string') {
+            return;
+          }
+          const session = this.sessions.find((item) => item.id === raw.id);
+          const title = raw.title.replace(/\s+/g, ' ').trim().slice(0, 80);
+          if (session === undefined || title === '') return;
+          session.title = title;
+          this.postSessions();
+          return;
+        }
+
         case 'session.close':
           if (typeof raw.id === 'string' && raw.confirm === true) {
             await this.closeSession(raw.id);
@@ -2204,23 +2223,18 @@ export class ChatViewProvider
 </head>
 <body>
   <div class="app">
-    <header class="header">
-      <div class="brand">
-        <span class="brand-mark">⌘</span>
-        <span>AgentBox</span>
-      </div>
-      <div class="meta"></div>
-      <button id="open-editor" class="icon-button" title="在编辑器中打开（可拖动布局）" aria-label="在编辑器中打开">⧉</button>
-      <button id="setup-guide" class="icon-button" title="安装与配置指引" aria-label="安装与配置指引">?</button>
-      <button id="knowledge" class="icon-button" title="知识提案" aria-label="知识提案">
-        <svg class="header-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3.2C6.6 2.4 4.9 2.2 3 2.5v10c1.9-.3 3.6-.1 5 .7 1.4-.8 3.1-1 5-.7v-10c-1.9-.3-3.6-.1-5 .7Z"/><path d="M8 3.2v10"/></svg>
-      </button>
-      <button id="skills" class="icon-button" title="技能" aria-label="技能">✦</button>
-      <button id="settings" class="icon-button" title="设置" aria-label="设置">⚙</button>
-    </header>
-    <div class="session-row">
+    <div class="topbar">
+      <span class="brand-mark topbar-brand" title="AgentBox" aria-label="AgentBox">⌘</span>
       <div id="session-bar" class="session-bar" role="tablist" aria-label="会话列表"></div>
       <button id="new" class="session-new" title="新建会话" aria-label="新建会话">＋</button>
+      <div class="topbar-actions">
+        <button id="setup-guide" class="icon-button" title="安装与配置指引" aria-label="安装与配置指引">?</button>
+        <button id="knowledge" class="icon-button" title="知识提案" aria-label="知识提案">
+          <svg class="header-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3.2C6.6 2.4 4.9 2.2 3 2.5v10c1.9-.3 3.6-.1 5 .7 1.4-.8 3.1-1 5-.7v-10c-1.9-.3-3.6-.1-5 .7Z"/><path d="M8 3.2v10"/></svg>
+        </button>
+        <button id="skills" class="icon-button" title="技能" aria-label="技能">✦</button>
+        <button id="settings" class="icon-button" title="设置" aria-label="设置">⚙</button>
+      </div>
     </div>
     <div id="chat-area" class="chat-area">
       <main id="transcript" class="transcript" aria-live="polite" aria-label="对话记录"></main>
@@ -2277,10 +2291,6 @@ export class ChatViewProvider
       </div>
       <div class="composer-input-wrap">
         <textarea id="input" rows="1" aria-label="消息输入框" placeholder="向 AgentBox 提问…（Enter 发送，Shift+Enter 换行；@ 引用 Skill）"></textarea>
-        <div id="mention-menu" class="mention-menu" role="listbox" aria-label="引用 Skill" hidden></div>
-      </div>
-      <div class="composer-actions">
-        <span id="status" class="status"></span>
         <button id="submit" class="submit-button" title="发送" aria-label="发送">
           <svg id="icon-send" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M3.5 11.6 20.5 4l-6.8 16-2.1-6.4-8.1-2Z" fill="currentColor"/>
@@ -2289,6 +2299,7 @@ export class ChatViewProvider
             <rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/>
           </svg>
         </button>
+        <div id="mention-menu" class="mention-menu" role="listbox" aria-label="引用 Skill" hidden></div>
       </div>
     </section>
 

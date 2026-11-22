@@ -7,9 +7,9 @@
 > 头部不显示 runtime/model；点击右上角 **⚙** 或执行 **AgentBox: Settings**
 > 打开内嵌设置浮层（模型 / Skill / 知识 / 高级四个 Tab），不离开对话。
 > 输入框自动增高，发送与取消合并为右侧同一个图标按钮。
-> 输入框上方固定显示活动时间线（思考 / 生成 / 工具三条泳道，失败工具变红，可折叠）。
-> 顶部会话标签栏支持多会话：新建、切换、长按关闭；每个会话保留独立上下文和 transcript。
-> 每个会话各自启动一个 Codex app-server 进程；顶栏 **⧉** 或右下角状态栏 **AgentBox** 可把聊天打开为编辑器标签页，像文件一样拖动/拆分布局。
+> 输入框上方固定显示活动时间线（思考 / 生成 / 工具三条泳道，失败工具变红，默认折叠）。
+> 顶部会话标签栏支持多会话：新建、切换、双击重命名、长按关闭；每个会话保留独立上下文和 transcript。
+> 每个会话各自启动一个 Codex app-server 进程；右下角状态栏 **AgentBox** 或命令 **AgentBox: Open in Editor** 可把聊天打开为编辑器标签页。
 > 支持本机 Skill 与团队 HTTP Skill Registry：本地固定目录创建/编辑，远程上传审批、required 下发、同步缓存。
 > 顶栏 **✦** 打开技能抽屉，用勾选启用/停用 local/optional skill；required 默认勾选且不可取消。
 > 任务模式 simple / code / research 控制超时；推理强度 low / medium / high 控制 thinking 成本；重复工具失败会自动停止本轮。
@@ -41,7 +41,7 @@
 cd extension
 npm install
 npm run build      # 构建 runtime + typecheck + esbuild（extension + webview）
-npm test           # 123 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / knowledge-* / bundle）
+npm test           # 124 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / knowledge-* / bundle）
 npm run verify
 ```
 
@@ -49,13 +49,13 @@ npm run verify
 
 ```powershell
 npm run package
-# 产物：extension/agentbox-0.4.3.vsix
+# 产物：extension/agentbox-0.4.5.vsix
 ```
 
 安装：
 
 ```powershell
-code --install-extension agentbox-0.4.3.vsix
+code --install-extension agentbox-0.4.5.vsix
 ```
 
 首次安装后：
@@ -450,12 +450,12 @@ mention skill
 9. 助手回复中的代码块右上角有 **复制** 按钮。
 10. 遇到 `approval.request` 时在卡片上选择 **允许 / 拒绝**。
 11. 运行中右下角按钮变成 **停止**（同一个按钮），也可执行 **AgentBox: Cancel Turn**。
-12. 顶栏 **＋** 新建会话，**⚙** 打开内嵌设置浮层（不离开对话）。
-13. 顶栏下方是 **会话标签栏**：点击切换会话；**长按标签上的 `×` 约 0.65 秒**，
+12. 顶部会话栏右侧 **＋** 新建会话，**⚙** 打开内嵌设置浮层（不离开对话）。
+13. 顶部是 **会话标签栏**：点击切换会话；双击标签可直接重命名；**长按标签上的 `×` 约 0.65 秒**，
     按钮外圈会走一圈进度，松手前完成才会关闭。每个会话有独立 transcript、token 统计、
     Codex thread 和独立的 `codex app-server` 进程。同一时刻只允许一个会话运行，
     切换前需先停止当前 turn。会话保留在扩展内存中，Reload 窗口后清空。
-14. 顶栏 **⧉**、视图标题栏菜单或命令 **AgentBox: Open in Editor** 把同一个聊天
+14. 视图标题栏菜单、状态栏 **AgentBox** 或命令 **AgentBox: Open in Editor** 把同一个聊天
     打开为编辑器标签页；编辑器标签页可以像普通文件一样拖动、拆分到其他编辑器组。
 15. 顶栏 **✦** 打开技能抽屉：左侧按“全部 / 本地 / 服务器 · 分组”分类，右侧勾选 local/optional skill，required 默认勾选且不可取消；
     抽屉底部可直接 **新建 / 打开目录 / 上传 / 同步远程**，不离开对话。变更在下一条 prompt 生效。
@@ -481,7 +481,7 @@ mention skill
 
 ### 4.2 活动时间线
 
-**输入框上方**固定显示当前 turn 的活动时间线，展开高度 80px，可折叠到 28px：
+**输入框上方**固定显示当前 turn 的活动时间线，默认折叠为 28px，展开高度 80px：
 
 - **思考**：从 turn 开始/工具结束到首个文本 token 的区间；
 - **生成**：收到 `text.delta` 后的文本输出区间；

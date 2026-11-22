@@ -263,7 +263,10 @@ describe('ChatViewProvider', () => {
     expect(webview.html).toContain('id="timeline-tokens"');
     expect(webview.html).toContain('id="question-nav"');
     expect(webview.html).toContain('id="question-tooltip"');
+    expect(webview.html).toContain('class="topbar"');
     expect(webview.html).toContain('id="session-bar"');
+    expect(webview.html).not.toContain('id="open-editor"');
+    expect(webview.html).not.toContain('id="status"');
     expect(webview.html).toContain('id="skill-bar"');
     expect(webview.html).toContain('id="skills-panel"');
     expect(webview.html).toContain('id="skills"');
@@ -452,12 +455,16 @@ describe('ChatViewProvider', () => {
     await provider?.openInEditor();
 
     expect(state.panels).toHaveLength(1);
+    const iconPath = state.panels[0]?.iconPath as { fsPath: string } | undefined;
+    expect(iconPath?.fsPath).toContain('media/icons/agentbox.svg');
     const webview = state.panels[0]?.webview as { html: string };
+    expect(webview.html).toContain('class="topbar"');
     expect(webview.html).toContain('id="session-bar"');
+    expect(webview.html).not.toContain('id="open-editor"');
+    expect(webview.html).not.toContain('id="status"');
     expect(webview.html).toContain('id="skill-bar"');
     expect(webview.html).toContain('id="skills-panel"');
     expect(webview.html).toContain('id="skills"');
-    expect(webview.html).toContain('id="open-editor"');
   });
 
   it('opens the in-panel settings overlay', async () => {
@@ -755,6 +762,20 @@ describe('ChatViewProvider', () => {
       events: [],
     });
     expect(state.messages).toContainEqual({ type: 'skills', skills: [] });
+  });
+
+  it('renames a session', () => {
+    resolveView();
+    state.receiveHandler?.({ type: 'ready' });
+    const id = lastSessions().activeId;
+
+    state.receiveHandler?.({
+      type: 'session.rename',
+      id,
+      title: '  新名字  ',
+    });
+
+    expect(lastSessions().sessions[0]?.title).toBe('新名字');
   });
 
   it('returns the skill catalog for the drawer', () => {

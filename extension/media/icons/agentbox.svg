@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 32 32">
+  <!-- AgentBox: puzzle pieces in an open slate case. Cool, low-saturation palette. -->
+  <g stroke="#0F172A" stroke-linejoin="round" stroke-linecap="round" stroke-width="1">
+    <!-- slate piece, back left -->
+    <g transform="translate(2.4 9.2) rotate(-16 5 5) scale(0.8)">
+      <path fill="#CBD5E1" d="M1 0H3.5A1.5 1.5 0 1 1 6.5 0H9A1 1 0 0 1 10 1V3.5A1.5 1.5 0 1 1 10 6.5V9A1 1 0 0 1 9 10H1A1 1 0 0 1 0 9V6.5A1.5 1.5 0 1 0 0 3.5V1A1 1 0 0 1 1 0Z"/>
+    </g>
+    <!-- cyan piece, back right -->
+    <g transform="translate(16.4 6.6) rotate(10 5 5) scale(0.95)">
+      <path fill="#22D3EE" d="M1 0H3.5A1.5 1.5 0 1 1 6.5 0H9A1 1 0 0 1 10 1V3.5A1.5 1.5 0 1 1 10 6.5V9A1 1 0 0 1 9 10H1A1 1 0 0 1 0 9V6.5A1.5 1.5 0 1 0 0 3.5V1A1 1 0 0 1 1 0Z"/>
+    </g>
+    <!-- blue piece, front -->
+    <g transform="translate(7 8) rotate(-3 5 5) scale(1.05)">
+      <path fill="#3B82F6" d="M1 0H3.5A1.5 1.5 0 1 1 6.5 0H9A1 1 0 0 1 10 1V3.5A1.5 1.5 0 1 1 10 6.5V9A1 1 0 0 1 9 10H1A1 1 0 0 1 0 9V6.5A1.5 1.5 0 1 0 0 3.5V1A1 1 0 0 1 1 0Z"/>
+    </g>
+  </g>
+
+  <!-- open slate case: dark interior, steel lip, case wall -->
+  <rect x="5.4" y="15.6" width="21.2" height="4.6" rx="0.8" fill="#0F172A"/>
+  <rect x="5.2" y="18.2" width="21.6" height="2.2" rx="0.8" fill="#64748B" stroke="#0F172A" stroke-width="1.2"/>
+  <rect x="5.2" y="19.4" width="21.6" height="8.8" rx="1" fill="#334155" stroke="#0F172A" stroke-width="1.2"/>
+  <path d="M7 19.2H25" stroke="#22D3EE" stroke-width="0.7" opacity="0.9"/>
+  <rect x="13" y="22.8" width="6" height="1.6" rx="0.8" fill="#0F172A" opacity="0.5"/>
+</svg>

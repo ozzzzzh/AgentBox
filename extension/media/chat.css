@@ -37,25 +37,6 @@ input {
   overflow: hidden;
 }
 
-.header {
-  position: relative;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
-  min-width: 0;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
 .brand-mark {
   display: inline-flex;
   align-items: center;
@@ -66,16 +47,6 @@ input {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   font-size: 11px;
-}
-
-.meta {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  opacity: 0.7;
-  font-size: 0.9em;
 }
 
 .icon-button {
@@ -98,13 +69,34 @@ input {
   vertical-align: -0.15em;
 }
 
-.session-row {
+.topbar {
+  position: relative;
+  z-index: 50;
   display: flex;
-  align-items: stretch;
+  align-items: center;
   flex: none;
+  gap: 4px;
   min-width: 0;
-  padding: 0 6px 0 2px;
+  padding: 4px 6px 4px 7px;
   border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.topbar-brand {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-right: 2px;
+}
+
+.topbar-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0;
+}
+
+.topbar-actions .icon-button {
+  padding: 3px 5px;
 }
 
 .session-bar {
@@ -158,6 +150,19 @@ input {
 .session-tab-wrap.active .session-tab {
   color: var(--vscode-foreground);
   font-weight: 600;
+}
+
+.session-rename-input {
+  width: 132px;
+  height: 22px;
+  margin: 2px 3px;
+  padding: 1px 5px;
+  border: 1px solid var(--vscode-focusBorder);
+  border-radius: 3px;
+  outline: none;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  font-size: 0.8em;
 }
 
 @property --agentbox-hold {
@@ -1295,7 +1300,7 @@ textarea {
   resize: none;
   min-height: 38px;
   max-height: 220px;
-  padding: 7px 9px;
+  padding: 7px 44px 7px 9px;
   color: var(--vscode-input-foreground);
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
@@ -1309,20 +1314,16 @@ textarea:focus {
   border-color: var(--vscode-focusBorder);
 }
 
-.composer-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
 .submit-button {
-  flex: none;
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -1378,28 +1379,6 @@ button.secondary:hover {
 button:disabled {
   opacity: 0.5;
   cursor: default;
-}
-
-.status {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.8em;
-  color: var(--vscode-descriptionForeground);
-}
-
-.status.busy::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: var(--vscode-progressBar-background, var(--vscode-focusBorder));
-  vertical-align: middle;
-  animation: agentbox-pulse 1s ease-in-out infinite;
 }
 
 .settings-scrim {
@@ -2182,17 +2161,12 @@ button:disabled {
 
 @media (prefers-reduced-motion: reduce) {
   .thinking-dots i,
-  .tool-status.running,
-  .status.busy::before {
+  .tool-status.running {
     animation: none;
   }
 }
 
 @media (max-width: 420px) {
-  .header {
-    padding: 6px 12px;
-  }
-
   .timeline {
     padding: 6px 18px 8px;
   }

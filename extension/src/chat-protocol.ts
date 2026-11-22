@@ -198,4 +198,5 @@ export type WebviewToHost =
   | { type: 'setup.dismiss' }
   | { type: 'session.new' }
   | { type: 'session.select'; id: string }
+  | { type: 'session.rename'; id: string; title: string }
   | { type: 'session.close'; id: string; confirm: boolean };
