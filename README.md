@@ -240,9 +240,9 @@ agentBox/
 | 项 | 要求 |
 |---|---|
 | OS | Windows 11（当前主要开发环境） |
-| Node | 扩展/runtime 开发 Node 18+；`knowledge-server` 必须 **Node 24+** |
+| Node | 只使用 VSIX 不需要；从源码构建需 Node 18+；`knowledge-server` 必须 **Node 24+** |
 | VS Code | 1.85+ |
-| Codex CLI | 已安装并 pin 版本；VSIX 不打包二进制 |
+| Codex CLI | 已安装并 pin 版本；VSIX 不打包二进制（`codex --version` 可验证） |
 | 模型 | DeepSeek 或内网 OpenAI-compatible provider |
 | 网络 | 默认 localhost/内网；公网模型需显式配置 |
 | Shell | Codex 使用 PowerShell 5.1；Git Bash 已回退 |
@@ -254,7 +254,53 @@ agentBox/
 
 ## 5. 快速开始
 
-### 5.1 安装依赖并构建 runtime
+### 5.1 最简使用（已有 VSIX，推荐新设备）
+
+如果只是使用 AgentBox，不需要 Node/npm 构建：
+
+1. 安装 VSIX：
+
+```powershell
+code --install-extension "D:\path\to\agentbox-0.4.0.vsix" --force
+```
+
+2. 安装 Codex CLI，并确认命令可用：
+
+```powershell
+codex --version
+```
+
+如果 `codex` 不在 PATH，在 AgentBox 设置 → 高级中把 **Codex 命令** 改成绝对路径，
+例如 `D:\tools\codex\codex.exe`。
+
+3. Reload VS Code，打开一个工作区。
+
+4. 打开 AgentBox Chat → **⚙**，配置：
+
+- Runtime：`codex`
+- Provider / 模型 / Base URL
+- API Key（写入 SecretStorage）
+
+5. 发送一条测试 prompt。首次 Windows 运行可能需要 Codex sandbox 初始化。
+
+**VSIX 内容说明**：
+
+| 内容 | 是否包含 |
+|---|---|
+| AgentBox extension / Webview | ✅ |
+| `AgentRuntime` + `CodexRuntime` adapter | ✅（编译进 `dist/extension.js`） |
+| Codex CLI 二进制 `codex.exe` | ❌ 需本机安装 |
+| `skill-server` / `knowledge-server` | ❌ 独立服务 |
+
+> VSIX 包含“调用 code agent 的 adapter”，不包含 code agent 本体。
+
+可选能力：
+
+- 本地 Skill：无需 server，放到 `~/.agentbox/skills/local/`；
+- 本地 Knowledge：无需 server，使用扩展 `globalStorage`；
+- 远程 Skill/Knowledge：分别启动 `skill-server` / `knowledge-server`。
+
+### 5.2 从源码构建 runtime
 
 ```powershell
 cd agent-runtime
@@ -262,7 +308,7 @@ npm install
 npm run build
 ```
 
-### 5.2 启动 Skill Server（可选）
+### 5.3 启动 Skill Server（可选）
 
 只有使用远程 Skill 时才需要；本地 Skill 不依赖该服务。
 
@@ -276,7 +322,7 @@ npm run dev:seed
 - 管理页：`http://127.0.0.1:4770/admin`，开发模式自动登录
 - 扩展本地 loopback 读取可匿名；上传/审批需要 `dev-author` / `dev-admin`
 
-### 5.3 启动 Knowledge Server（使用远程/共享知识库时需要）
+### 5.4 启动 Knowledge Server（使用远程/共享知识库时需要）
 
 `agentbox.knowledge.serverUrl` 为空时使用扩展本地知识存储（`globalStorage`），
 不需要启动 server；不影响普通聊天。
@@ -291,7 +337,7 @@ npm run dev
 - dev token：`dev-author`（写入/发布）、`dev-reader`、`dev-admin`
 - 数据目录：`.knowledge-data/`
 
-### 5.4 构建并安装扩展
+### 5.5 构建并安装扩展
 
 ```powershell
 cd extension
@@ -303,7 +349,7 @@ code --install-extension "agentbox-0.4.0.vsix" --force
 产物：`extension/agentbox-0.4.0.vsix`。安装后 Reload Window。
 Codex 二进制不打包在 VSIX 中，需要在本机单独安装或配置绝对路径。
 
-### 5.5 配置扩展
+### 5.6 配置扩展
 
 打开 AgentBox Chat，点击右上角 **⚙**，在设置浮层中配置：
 
