@@ -2,7 +2,7 @@
   "name": "agentbox-vscode",
   "displayName": "AgentBox",
   "description": "AgentBox: Codex app-server runtime with a multi-session webview chat sidebar, inline approvals, and file context.",
-  "version": "0.4.0",
+  "version": "0.4.3",
   "publisher": "agentbox",
   "private": true,
   "license": "Apache-2.0",
@@ -24,7 +24,9 @@
     "onCommand:agentbox.knowledgeStatus",
     "onCommand:agentbox.setKnowledgeServerToken",
     "onCommand:agentbox.captureKnowledge",
-    "onCommand:agentbox.knowledgeProposals"
+    "onCommand:agentbox.knowledgeProposals",
+    "onCommand:agentbox.detectCodex",
+    "onCommand:agentbox.setupGuide"
   ],
   "contributes": {
     "viewsContainers": {
@@ -171,6 +173,18 @@
         "command": "agentbox.knowledgeSettings",
         "title": "AgentBox: Knowledge Settings",
         "category": "AgentBox"
+      },
+      {
+        "command": "agentbox.detectCodex",
+        "title": "AgentBox: Detect Codex CLI",
+        "category": "AgentBox",
+        "icon": "$(search)"
+      },
+      {
+        "command": "agentbox.setupGuide",
+        "title": "AgentBox: Setup Guide",
+        "category": "AgentBox",
+        "icon": "$(question)"
       },
       {
         "command": "agentbox.captureKnowledge",
@@ -466,7 +480,7 @@
     "build": "npm run build:runtime && npm run typecheck && node esbuild.mjs",
     "test": "vitest run",
     "verify": "npm run build && npm test",
-    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository -o agentbox-0.4.0.vsix"
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository -o agentbox-0.4.3.vsix"
   },
   "dependencies": {
     "@agentbox/runtime": "file:../agent-runtime",

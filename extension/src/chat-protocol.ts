@@ -57,6 +57,13 @@ export interface SessionSummary {
   busy: boolean;
 }
 
+export interface SetupStatus {
+  platform: 'win32' | 'darwin' | 'linux';
+  apiKeyConfigured: boolean;
+  codexCommand: string;
+  codexDetected: boolean;
+}
+
 /**
  * Events that belong to one conversation. They are recorded by the host and
  * replayed when a webview surface (sidebar or editor panel) attaches or when
@@ -133,6 +140,8 @@ export type HostToWebview =
       remote?: KnowledgeLibraryItem[];
       remoteError?: string;
     }
+  | { type: 'setup.status'; status: SetupStatus }
+  | { type: 'setup.open' }
   | { type: 'knowledge.open' }
   | { type: 'context'; context: ContextInfo }
   | { type: 'settings'; values: SettingsValues }
@@ -183,6 +192,10 @@ export type WebviewToHost =
   | { type: 'knowledge.edit'; id: string }
   | { type: 'knowledge.deleteProposal'; id: string }
   | { type: 'knowledge.library.request' }
+  | { type: 'setup.request' }
+  | { type: 'setup.detectCodex' }
+  | { type: 'setup.openDocs' }
+  | { type: 'setup.dismiss' }
   | { type: 'session.new' }
   | { type: 'session.select'; id: string }
   | { type: 'session.close'; id: string; confirm: boolean };

@@ -4,6 +4,7 @@ import type {
   ContextInfo,
   HostToWebview,
   SettingsValues,
+  SetupStatus,
   WebviewToHost,
 } from '../chat-protocol';
 import type {
@@ -42,6 +43,7 @@ const stopIcon = byId<SVGElement>('icon-stop');
 const newButton = byId<HTMLButtonElement>('new');
 const settingsButton = byId<HTMLButtonElement>('settings');
 const openEditorButton = byId<HTMLButtonElement>('open-editor');
+const setupGuideButton = byId<HTMLButtonElement>('setup-guide');
 const skillsButton = byId<HTMLButtonElement>('skills');
 const knowledgeButton = byId<HTMLButtonElement>('knowledge');
 const sessionBar = byId<HTMLElement>('session-bar');
@@ -55,6 +57,28 @@ const fileToggle = byId<HTMLButtonElement>('toggle-file');
 const selectionToggle = byId<HTMLButtonElement>('toggle-selection');
 const fileLabel = byId<HTMLElement>('file-label');
 const selectionLabel = byId<HTMLElement>('selection-label');
+
+const setupPanel = byId<HTMLElement>('setup-panel');
+const setupScrim = byId<HTMLElement>('setup-scrim');
+const setupClose = byId<HTMLButtonElement>('setup-close');
+const setupStepLabel = byId<HTMLElement>('setup-step-label');
+const setupDots = Array.from(
+  document.querySelectorAll<HTMLElement>('.setup-dots i')
+);
+const setupSteps = Array.from(
+  document.querySelectorAll<HTMLElement>('[data-setup-step]')
+);
+const setupApiStatus = byId<HTMLElement>('setup-api-status');
+const setupCodexStatus = byId<HTMLElement>('setup-codex-status');
+const setupPlatformHint = byId<HTMLElement>('setup-platform-hint');
+const setupCommand = byId<HTMLElement>('setup-command');
+const setupOpenModel = byId<HTMLButtonElement>('setup-open-model');
+const setupCopyCommand = byId<HTMLButtonElement>('setup-copy-command');
+const setupDetectCodex = byId<HTMLButtonElement>('setup-detect-codex');
+const setupOpenDocs = byId<HTMLButtonElement>('setup-open-docs');
+const setupPrev = byId<HTMLButtonElement>('setup-prev');
+const setupNext = byId<HTMLButtonElement>('setup-next');
+const setupLater = byId<HTMLButtonElement>('setup-later');
 
 const settingsPanel = byId<HTMLElement>('settings-panel');
 const settingsScrim = byId<HTMLElement>('settings-scrim');
@@ -131,6 +155,9 @@ interface SkillGroupInfo {
 
 let skillGroups: SkillGroupInfo[] = [];
 let skillCategory = 'all';
+let setupStatus: SetupStatus | undefined;
+let setupStep = 0;
+
 let knowledgeProposals: KnowledgeProposalSummary[] = [];
 let knowledgeServerConfigured = false;
 let knowledgeLibraryLocal: KnowledgeLibraryItem[] = [];
@@ -1749,6 +1776,15 @@ function handleMessage(message: HostToWebview): void {
       openKnowledgePanel();
       return;
 
+    case 'setup.status':
+      setupStatus = message.status;
+      if (!setupPanel.hidden) renderSetup();
+      return;
+
+    case 'setup.open':
+      openSetupPanel();
+      return;
+
     case 'user.message':
       addUserMessage(message.text);
       return;
@@ -2006,7 +2042,73 @@ function renderSkillGroups(): void {
   updateSkillGroupSummary();
 }
 
+function setupInstallCommand(): string {
+  return 'npm install -g @openai/codex@0.165.0';
+}
+
+function renderSetup(): void {
+  for (const step of setupSteps) {
+    step.hidden = Number(step.dataset.setupStep) !== setupStep;
+  }
+  setupDots.forEach((dot, index) => {
+    dot.classList.toggle('active', index === setupStep);
+  });
+  setupStepLabel.textContent = `${setupStep + 1} / ${setupSteps.length}`;
+  setupPrev.disabled = setupStep === 0;
+  setupNext.textContent = setupStep === setupSteps.length - 1 ? '完成' : '下一步';
+  settingsButton.classList.toggle(
+    'settings-attention',
+    setupStep === 0 && !setupPanel.hidden
+  );
+
+  if (setupStatus === undefined) {
+    setupApiStatus.textContent = '正在读取配置…';
+    setupApiStatus.className = 'setup-status';
+  } else {
+    setupApiStatus.textContent = setupStatus.apiKeyConfigured
+      ? 'API Key 已配置'
+      : 'API Key 尚未配置';
+    setupApiStatus.className = `setup-status ${
+      setupStatus.apiKeyConfigured ? 'ok' : 'warn'
+    }`;
+    setupPlatformHint.textContent =
+      setupStatus.platform === 'darwin'
+        ? 'macOS：安装后通常是 /opt/homebrew/bin/codex 或 /usr/local/bin/codex。'
+        : setupStatus.platform === 'win32'
+          ? 'Windows：安装后通常是 codex.cmd 或 codex.exe；扩展会自动搜索 PATH。'
+          : 'Linux：安装后通常是 /usr/local/bin/codex 或 ~/.local/bin/codex。';
+    setupCommand.textContent = setupInstallCommand();
+    setupCodexStatus.textContent = setupStatus.codexDetected
+      ? `已检测到 Codex：${setupStatus.codexCommand || '已通过 PATH 找到'}`
+      : '尚未检测到 Codex CLI';
+    setupCodexStatus.className = `setup-status ${
+      setupStatus.codexDetected ? 'ok' : 'warn'
+    }`;
+  }
+}
+
+function openSetupPanel(): void {
+  if (!settingsPanel.hidden) closeSettingsPanel();
+  if (!skillsPanel.hidden) closeSkillsPanel();
+  if (!knowledgePanel.hidden) closeKnowledgePanel();
+  setupStep = 0;
+  setupPanel.hidden = false;
+  setupScrim.hidden = false;
+  renderSetup();
+  post({ type: 'setup.request' });
+  setupClose.focus();
+}
+
+function closeSetupPanel(dismiss: boolean): void {
+  setupPanel.hidden = true;
+  setupScrim.hidden = true;
+  settingsButton.classList.remove('settings-attention');
+  if (dismiss) post({ type: 'setup.dismiss' });
+  input.focus();
+}
+
 function openSettingsPanel(): void {
+  if (!setupPanel.hidden) closeSetupPanel(false);
   if (!skillsPanel.hidden) closeSkillsPanel();
   if (!knowledgePanel.hidden) closeKnowledgePanel();
   clearSettingsError();
@@ -2026,6 +2128,7 @@ function closeSettingsPanel(): void {
 
 function openSkillsPanel(): void {
   if (!settingsPanel.hidden) closeSettingsPanel();
+  if (!setupPanel.hidden) closeSetupPanel(false);
   if (!knowledgePanel.hidden) closeKnowledgePanel();
   skillsPanel.hidden = false;
   skillsScrim.hidden = false;
@@ -2223,6 +2326,7 @@ function renderKnowledgePanel(): void {
 function openKnowledgePanel(): void {
   if (!settingsPanel.hidden) closeSettingsPanel();
   if (!skillsPanel.hidden) closeSkillsPanel();
+  if (!setupPanel.hidden) closeSetupPanel(false);
   knowledgePanel.hidden = false;
   knowledgeScrim.hidden = false;
   renderKnowledgePanel();
@@ -2501,6 +2605,7 @@ newButton.addEventListener('click', () => {
 openEditorButton.addEventListener('click', () => {
   post({ type: 'openEditor' });
 });
+setupGuideButton.addEventListener('click', openSetupPanel);
 clearApiKeyButton.addEventListener('click', () => {
   clearApiKey = true;
   settingApiKey.value = '';
@@ -2544,6 +2649,40 @@ joinSkillGroupsButton.addEventListener('click', () => {
   post({ type: 'skills.joinGroups', ids });
 });
 settingsButton.addEventListener('click', openSettingsPanel);
+setupClose.addEventListener('click', () => closeSetupPanel(true));
+setupScrim.addEventListener('click', () => closeSetupPanel(true));
+setupLater.addEventListener('click', () => closeSetupPanel(true));
+setupPrev.addEventListener('click', () => {
+  setupStep = Math.max(0, setupStep - 1);
+  renderSetup();
+});
+setupNext.addEventListener('click', () => {
+  if (setupStep >= setupSteps.length - 1) {
+    closeSetupPanel(true);
+    return;
+  }
+  setupStep += 1;
+  renderSetup();
+});
+setupOpenModel.addEventListener('click', () => {
+  closeSetupPanel(false);
+  openSettingsPanel();
+  selectSettingsTab('model');
+});
+setupCopyCommand.addEventListener('click', () => {
+  const text = setupCommand.textContent ?? setupInstallCommand();
+  void navigator.clipboard?.writeText(text).catch(() => {
+    // Clipboard may be unavailable in a webview; keep the command visible.
+  });
+});
+setupDetectCodex.addEventListener('click', () => {
+  setupCodexStatus.textContent = '正在检测…';
+  setupCodexStatus.className = 'setup-status';
+  post({ type: 'setup.detectCodex' });
+});
+setupOpenDocs.addEventListener('click', () => {
+  post({ type: 'setup.openDocs' });
+});
 settingsClose.addEventListener('click', closeSettingsPanel);
 settingsCancel.addEventListener('click', closeSettingsPanel);
 settingsSave.addEventListener('click', saveSettings);

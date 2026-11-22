@@ -8,8 +8,10 @@ import type {
   SessionEvent,
   SessionSummary,
   SettingsValues,
+  SetupStatus,
   WebviewToHost,
 } from './chat-protocol';
+import { locateCodex } from './codex-locator';
 import { buildContextText } from './context';
 import { RuntimeController } from './controller';
 import { evaluateApprovalPolicy } from './file-policy';
@@ -448,6 +450,72 @@ export class ChatViewProvider
    * the latest turn, asks the model to compress it into a proposal, and stores
    * the result locally for the user to review. It never publishes directly.
    */
+  private async getSetupStatus(): Promise<SetupStatus> {
+    const model = readModelSettings();
+    const secret = await this.context.secrets.get(secretKey(model.provider));
+    const envKey = process.env[model.apiKeyEnv];
+    const config = vscode.workspace.getConfiguration('agentbox');
+    const command = config.get<string>('codex.command', 'codex').trim();
+    const defaultCommand =
+      command === '' || /^codex(?:\.(?:cmd|exe|bat))?$/i.test(command);
+    const detected = defaultCommand
+      ? locateCodex()
+      : existsSync(command)
+        ? command
+        : locateCodex();
+    const platform: SetupStatus['platform'] =
+      process.platform === 'win32'
+        ? 'win32'
+        : process.platform === 'darwin'
+          ? 'darwin'
+          : 'linux';
+    return {
+      platform,
+      apiKeyConfigured:
+        (secret !== undefined && secret.trim() !== '') ||
+        (envKey !== undefined && envKey.trim() !== ''),
+      codexCommand: detected ?? command,
+      codexDetected: detected !== undefined,
+    };
+  }
+
+  async openSetup(): Promise<void> {
+    try {
+      await vscode.commands.executeCommand('agentbox.chat.focus');
+    } catch {
+      // Focus is best effort; the message below still opens the guide.
+    }
+    this.post({ type: 'setup.status', status: await this.getSetupStatus() });
+    this.post({ type: 'setup.open' });
+  }
+
+  private async maybeShowSetup(): Promise<void> {
+    if (this.context.globalState.get<boolean>('agentbox.setupAutoShown') === true) {
+      return;
+    }
+    const status = await this.getSetupStatus();
+    if (status.apiKeyConfigured && status.codexDetected) return;
+    await this.context.globalState.update('agentbox.setupAutoShown', true);
+    this.post({ type: 'setup.status', status });
+    this.post({ type: 'setup.open' });
+  }
+
+  private async openSetupDocs(): Promise<void> {
+    const path = vscode.Uri.joinPath(
+      this.extensionUri,
+      'media',
+      'SETUP.md'
+    );
+    try {
+      const document = await vscode.workspace.openTextDocument(path);
+      await vscode.window.showTextDocument(document, { preview: true });
+    } catch {
+      void vscode.window.showWarningMessage(
+        'AgentBox: 无法打开安装文档。'
+      );
+    }
+  }
+
   async captureKnowledge(): Promise<void> {
     if (this.busy || this.isExternalBusy()) {
       this.post({
@@ -1203,6 +1271,7 @@ export class ChatViewProvider
           this.postKnowledgeProposals();
           this.postState();
           this.postContext();
+          void this.maybeShowSetup();
           if (this.pendingSettingsOpen) {
             this.pendingSettingsOpen = false;
             this.post({ type: 'settings.open' });
@@ -1353,6 +1422,29 @@ export class ChatViewProvider
 
         case 'showLog':
           this.showOutput();
+          return;
+
+        case 'setup.request':
+          this.post({
+            type: 'setup.status',
+            status: await this.getSetupStatus(),
+          });
+          return;
+
+        case 'setup.detectCodex':
+          await vscode.commands.executeCommand('agentbox.detectCodex');
+          this.post({
+            type: 'setup.status',
+            status: await this.getSetupStatus(),
+          });
+          return;
+
+        case 'setup.openDocs':
+          await this.openSetupDocs();
+          return;
+
+        case 'setup.dismiss':
+          await this.context.globalState.update('agentbox.setupAutoShown', true);
           return;
 
         case 'settings.request':
@@ -2119,6 +2211,7 @@ export class ChatViewProvider
       </div>
       <div class="meta"></div>
       <button id="open-editor" class="icon-button" title="在编辑器中打开（可拖动布局）" aria-label="在编辑器中打开">⧉</button>
+      <button id="setup-guide" class="icon-button" title="安装与配置指引" aria-label="安装与配置指引">?</button>
       <button id="knowledge" class="icon-button" title="知识提案" aria-label="知识提案">
         <svg class="header-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3.2C6.6 2.4 4.9 2.2 3 2.5v10c1.9-.3 3.6-.1 5 .7 1.4-.8 3.1-1 5-.7v-10c-1.9-.3-3.6-.1-5 .7Z"/><path d="M8 3.2v10"/></svg>
       </button>
@@ -2198,6 +2291,50 @@ export class ChatViewProvider
         </button>
       </div>
     </section>
+
+    <div id="setup-scrim" class="setup-scrim" hidden></div>
+    <aside id="setup-panel" class="setup-panel" role="dialog" aria-modal="true" aria-label="AgentBox 安装指引" hidden>
+      <div class="setup-header">
+        <span>AgentBox 安装指引</span>
+        <button id="setup-close" class="icon-button" title="关闭安装指引" aria-label="关闭安装指引">✕</button>
+      </div>
+      <div class="setup-progress">
+        <span id="setup-step-label">1 / 3</span>
+        <div class="setup-dots">
+          <i class="active"></i><i></i><i></i>
+        </div>
+      </div>
+      <div class="setup-body">
+        <section data-setup-step="0">
+          <h3>1. 配置 LLM API</h3>
+          <p>AgentBox 需要 provider、模型和 API Key 才能启动 agent。API Key 只保存到 VS Code SecretStorage。</p>
+          <p id="setup-api-status" class="setup-status"></p>
+          <button id="setup-open-model" class="primary" type="button">打开模型设置</button>
+          <p class="setup-hint">也可以点击右上角 <b>⚙</b>。设置完成后回到这里继续。</p>
+        </section>
+        <section data-setup-step="1" hidden>
+          <h3>2. 安装 Code agent（Codex CLI）</h3>
+          <p>VSIX 只包含 Codex adapter，不包含 Codex 本体。请先安装 Codex CLI：</p>
+          <p id="setup-platform-hint" class="setup-hint"></p>
+          <pre id="setup-command" class="setup-command"></pre>
+          <div class="setup-inline-actions">
+            <button id="setup-copy-command" class="secondary" type="button">复制命令</button>
+            <button id="setup-detect-codex" class="secondary" type="button">自动检测 Codex</button>
+          </div>
+          <p id="setup-codex-status" class="setup-status"></p>
+        </section>
+        <section data-setup-step="2" hidden>
+          <h3>3. 开始使用</h3>
+          <p>如果模型和 Codex 都已配置，可以直接发送第一条 prompt。首次运行可能需要初始化 Codex sandbox。</p>
+          <button id="setup-open-docs" class="secondary" type="button">查看完整安装文档</button>
+        </section>
+      </div>
+      <div class="setup-footer">
+        <button id="setup-prev" class="secondary" type="button">上一步</button>
+        <button id="setup-next" class="primary" type="button">下一步</button>
+        <button id="setup-later" class="text-button" type="button">稍后</button>
+      </div>
+    </aside>
 
     <div id="settings-scrim" class="settings-scrim" hidden></div>
     <aside id="settings-panel" class="settings-panel" role="dialog" aria-modal="true" aria-label="AgentBox 设置" hidden>

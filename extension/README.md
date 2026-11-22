@@ -41,7 +41,7 @@
 cd extension
 npm install
 npm run build      # 构建 runtime + typecheck + esbuild（extension + webview）
-npm test           # 121 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / knowledge-* / bundle）
+npm test           # 123 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / knowledge-* / bundle）
 npm run verify
 ```
 
@@ -49,14 +49,23 @@ npm run verify
 
 ```powershell
 npm run package
-# 产物：extension/agentbox-0.4.0.vsix
+# 产物：extension/agentbox-0.4.3.vsix
 ```
 
 安装：
 
 ```powershell
-code --install-extension agentbox-0.4.0.vsix
+code --install-extension agentbox-0.4.3.vsix
 ```
+
+首次安装后：
+
+- 如果尚未配置 API Key 或 Codex，打开 AgentBox Chat 会自动弹出 Webview 安装向导；
+- 点击顶栏 **?** 或执行 **AgentBox: Setup Guide** 可重新打开；
+- 向导包含模型配置、Codex 安装命令、自动检测、完成步骤；
+- 扩展会自动检测 Codex CLI 并写入 `agentbox.codex.command`；
+- 也可以执行 **AgentBox: Detect Codex CLI** 手动检测；
+- macOS 安装说明见仓库根目录 `README.md` 的「平台说明」。
 
 ---
 
@@ -539,6 +548,8 @@ assistant 消息按时间顺序显示 **处理过程**：思考、工具、中�
 | `AgentBox: Sync Remote Skills` | 同步 approved/required 远程 Skill |
 | `AgentBox: Set Skill Server Token` | 存 Skill Registry token 到 SecretStorage |
 | `AgentBox: Skill Settings` | 打开 Skill 相关设置 |
+| `AgentBox: Detect Codex CLI` | 搜索并自动设置 Codex CLI 路径 |
+| `AgentBox: Setup Guide` | 打开安装与配置指引 |
 | `AgentBox: Reindex Knowledge` | 扫描 workspace 并增量推送到 knowledge server |
 | `AgentBox: Search Knowledge` | 搜索知识库并打开命中文件行 |
 | `AgentBox: Knowledge Status` | 查看文档/chunk/最后索引时间 |

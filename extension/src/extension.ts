@@ -1,5 +1,7 @@
+import { existsSync } from 'node:fs';
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './chat-view';
+import { locateCodex } from './codex-locator';
 import { RuntimeController } from './controller';
 import { registerKnowledgeCommands } from './knowledge-commands';
 import { registerSkillCommands } from './skill-commands';
@@ -112,8 +114,53 @@ async function autoSyncSkills(context: vscode.ExtensionContext): Promise<void> {
   }
 }
 
+async function detectCodexCommand(
+  showMessage = true
+): Promise<string | undefined> {
+  const config = vscode.workspace.getConfiguration('agentbox');
+  const current = config.get<string>('codex.command', 'codex').trim();
+  const isDefaultCommand =
+    current === '' || /^codex(?:\.(?:cmd|exe|bat))?$/i.test(current);
+  if (!isDefaultCommand && existsSync(current)) {
+    if (showMessage) {
+      void vscode.window.showInformationMessage(
+        `AgentBox: Codex CLI 已配置：${current}`
+      );
+    }
+    return current;
+  }
+  const detected = locateCodex();
+  if (detected === undefined) {
+    if (showMessage) {
+      void vscode.window.showWarningMessage(
+        'AgentBox: 未找到 Codex CLI。请先安装 Codex，或在设置 → 高级中填写绝对路径。',
+        '打开安装指引'
+      ).then((choice) => {
+        if (choice === '打开安装指引') {
+          void vscode.commands.executeCommand('agentbox.setupGuide');
+        }
+      });
+    }
+    return undefined;
+  }
+  if (detected !== current) {
+    await config.update(
+      'codex.command',
+      detected,
+      vscode.ConfigurationTarget.Global
+    );
+  }
+  if (showMessage) {
+    void vscode.window.showInformationMessage(
+      `AgentBox: 已自动检测并设置 Codex CLI：${detected}`
+    );
+  }
+  return detected;
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   void autoSyncSkills(context);
+  void detectCodexCommand(false);
   const provider = new ChatViewProvider(
     context,
     context.extensionUri,
@@ -156,6 +203,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand('agentbox.configure', async () => {
       await provider.openSettings();
+    }),
+
+    vscode.commands.registerCommand('agentbox.detectCodex', async () => {
+      await detectCodexCommand(true);
+    }),
+
+    vscode.commands.registerCommand('agentbox.setupGuide', async () => {
+      await provider.openSetup();
     }),
 
     vscode.commands.registerCommand('agentbox.captureKnowledge', async () => {
