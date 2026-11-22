@@ -35,7 +35,7 @@
 | **UI-1** Webview 侧边栏 MVP | ✅ | 2026-10-31 | `extension@0.3.0` + `agentbox-0.3.0.vsix` | 67 | build / test / package / 隔离安装通过；含多会话与编辑器面板 |
 | **SK-1..S6** Skill 系统 MVP | ✅ | 2026-11-02 | [SKILL-SYSTEM.md](SKILL-SYSTEM.md)、`extension/src/skills/*`、`skill-server/` | 95 + 9 | 本地/远程 skill、HTTP Registry、审批、required、同步、注入、技能抽屉/@ 主动调用通过 |
 | **PERF-1** Turn 超时/推理强度 | ✅ | 2026-11-05 | [PERFORMANCE.md](PERFORMANCE.md)、controller/runtime | 94 | 超时 turn/interrupt、reasoning effort medium、reasoning display auto/raw、提示词硬化 |
-| **M11** Runtime 解耦 / bash-capable runtime | ⬜ 暂缓 | — | [HANDOFF.md](HANDOFF.md) §10 PENDING-1 | — | Codex 已回退 PowerShell（2026-11-06）；先完成 Skill Server/KB；当前保持 `AgentRuntime`/`AgentEvent` 契约纪律 |
+| **M11** Runtime 解耦 / bash-capable runtime | ⬜ 暂缓 | — | [HANDOFF.md](HANDOFF.md) §10 PENDING-1 / PENDING-3 | — | Codex 已回退 PowerShell（2026-11-06）；多 CLI adapter（Claude Code / OpenCode / DeepSeek）见 PENDING-3；当前保持 `AgentRuntime`/`AgentEvent` 契约纪律 |
 | **KB-0/KB-1** Knowledge Base | ✅ | 2026-11-18 | `knowledge-server/`、[CONTRACT.md](../../knowledge-server/docs/CONTRACT.md)、`extension/src/knowledge/*`、`agentbox-0.4.0.vsix` | 19 + 121 | FTS5/trigram、upsert/search、redaction/secret、ContextAssembler、引用 chips、local capture/proposal、server-down 降级 |
 
 **当前累计**：291 个测试通过（默认套件）。

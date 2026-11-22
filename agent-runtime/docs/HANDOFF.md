@@ -274,7 +274,7 @@ P0 当前结论：
    验证方案见 [SKILL-VERIFICATION.md](SKILL-VERIFICATION.md)。Knowledge Base 见 [KNOWLEDGE-BASE.md](KNOWLEDGE-BASE.md)。
 6. **UI-3**：Skill 库 / 知识面板（已具备命令/QuickPick/chips，完整面板可继续迭代）。
 7. **M7 / M11**（暂缓）：OpenCode adapter / Runtime 解耦 / srt；
-   见 §10 PENDING-1。先完成 Skill Server 与 KB，再回来处理。
+   见 §10 PENDING-1；多 CLI adapter 见 §10 PENDING-3。先完成 Skill Server 与 KB。
 8. **Knowledge Base**：设计见 [KNOWLEDGE-BASE.md](KNOWLEDGE-BASE.md)；
    KB-0/KB-1 已完成；下一步 KB-4（评估/ACL/云端）或 PENDING-2。
 9. **内网 Qwen/Qwen3-Coder**：生产部署前确认。
@@ -394,6 +394,50 @@ UI 消费者继续只依赖 createRuntime + AgentEvent，不修改 adapter。
   6. 组审批通过后没有主动通知客户端；客户端需重新打开设置或 Sync。
 - **处理时机**：Knowledge Base MVP 完成后再做 Skill hardening；若 KB 需要
   复用 skill group ACL，则优先补 `target` 过滤。
+
+### PENDING-3：多 CLI / 多 runtime adapter（Claude Code / OpenCode / DeepSeek）
+
+- **状态**：⏸ 暂缓，未实现；与 PENDING-1 相关，但不阻塞当前产品。
+- **背景**：
+  - 当前 `AgentRuntime` 只有 Codex adapter 完整可用；`FakeRuntime` 用于测试；
+    `OpenCodeRuntime` 仍是 stub。
+  - AgentBox CLI 与 VSIX 共用 runtime 层，新增 adapter 会同时受益。
+  - `agentbox.codex.command` 只能指向 Codex CLI；它必须是 `codex app-server`，
+    不能把命令替换成 `claude` / `opencode` / `deepseek`。
+  - 用户提出希望用 CLI 方式执行 Claude Code CLI、OpenCode CLI、DeepSeek CLI。
+- **决策**：
+  - 不把“通用 shell 包一层 stdin/stdout”作为主 runtime；它只能提供降级的
+    文本能力，无法可靠映射工具、审批、取消、token usage 和进程树。
+  - 每个 CLI 必须实现独立 adapter，满足 `AgentRuntime` 契约：
+    `start` / `startTurn` / `onEvent` / `resolveApproval` / `abort` / `stop`。
+  - 优先使用官方 headless / stream JSON / SDK / HTTP+SSE；不要抓取交互式 TUI。
+  - adapter 内部维护能力探测和版本 pin；UI/Controller 仍只依赖
+    `AgentRuntime` + `AgentEvent`。
+  - 每个 runtime 的沙箱/审批/遥测/网络策略独立配置；不能降低 Codex 的
+    sandbox/approval 完整性。
+  - 新增 runtime 配置必须命名空间化（`claude.*` / `opencode.*` / `deepseek.*`），
+    不扩散到通用 `ModelSettings`。
+- **候选与顺序**：
+  1. **OpenCodeRuntime**：已有 1.19.4 server/OpenAPI/SSE/abort 探测；
+     bash 已验证；优先实现 server adapter（约 8–12d）。
+  2. **ClaudeCodeRuntime**：接官方 headless/stream JSON 或 Agent SDK；
+     重点映射权限/审批、工具事件、取消和 session 生命周期（约 10–15d）。
+  3. **DeepSeek**：如果只是模型 API，作为现有 runtime 的 provider 配置即可，
+     不需要 adapter；如果 DeepSeek 提供 coding-agent CLI/协议，再单独 adapter。
+  4. **GenericCliRuntime**：仅用于无工具、无审批的文本任务；不作为主 runtime。
+- **验收标准**：
+  - 新 adapter 通过 `tests/testing/contract` 的通用契约套件；
+  - `turn.start` / `turn.end` 恰好一次；工具事件成对；审批拒绝后不执行；
+  - abort 在目标时间内结束并清理进程树；
+  - capability 标记准确（tools / approvals / file events / MCP）；
+  - 新增 runtime 不改 `RuntimeController` / Webview；
+  - Codex 行为、sandbox、PowerShell 路径不回归；
+  - 文档更新 `COMPATIBILITY.md`、`ARCHITECTURE.md`、`HANDOFF.md`。
+- **触发条件**（任一）：
+  1. 产品需要同时支持第二个完整 coding-agent CLI；
+  2. 用户明确要求 Claude Code / OpenCode 作为可切换 runtime；
+  3. 需要 bash-capable runtime（见 PENDING-1）；
+  4. Codex Windows 继续限制关键工作流。
 
 ---
 
@@ -543,7 +587,7 @@ npm run dev
 ```text
 你在 AgentBox 继续工作。先读：
   ARCHITECTURE.md（系统总览）
-  agent-runtime/docs/HANDOFF.md（重点 §10 PENDING-2、§11）
+  agent-runtime/docs/HANDOFF.md（重点 §10 PENDING-1/2/3、§11）
   agent-runtime/docs/KNOWLEDGE-BASE.md
   agent-runtime/docs/SKILL-SYSTEM.md
   agent-runtime/docs/SKILL-VERIFICATION.md
