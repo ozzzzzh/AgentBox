@@ -49,13 +49,13 @@ npm run verify
 
 ```powershell
 npm run package
-# 产物：extension/agentbox-0.4.5.vsix
+# 产物：extension/agentbox-1.0.0.vsix
 ```
 
 安装：
 
 ```powershell
-code --install-extension agentbox-0.4.5.vsix
+code --install-extension agentbox-1.0.0.vsix
 ```
 
 首次安装后：

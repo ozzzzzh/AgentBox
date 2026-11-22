@@ -208,6 +208,7 @@ VS Code 集成在下一阶段通过消费者/adapter 完成。
 | `extension/src/skills/*` / `skill-commands.ts` / `../../skill-server/` | ✅ **Skill S1–S6**：本地/远程 skill、包校验/hash、Registry、审批/required、同步、注入、命令/UI |
 | `../../extension/agentbox-0.3.0.vsix` | ✅ 123.04 KB（9 files），UI-1 历史产物 |
 | `../../extension/agentbox-0.4.4.vsix` | ✅ 152.35 KB（12 files），KB-0/KB-1 + local capture；隔离安装成功 |
+| `../../extension/agentbox-1.0.0.vsix` | ✅ 154.91 KB（14 files），汇总 0.4.4 Webview 布局 + 0.4.5 图标；隔离安装成功 |
 | `npm run verify`（runtime） | ✅ 142 个测试通过（含 CLI 15、eval 9） |
 | `npm run verify`（extension） | ✅ 95 个测试通过（controller 11、settings 8、chat-view 19、timeline 5、context 5、webview-ui 6、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、skills-model 4、skills-store 5、skills-injection 5、skills-catalog 2、skills-mentions 3、skills-client 5、bundle 1） |
 | `npm test`（skill-server） | ✅ 9 个测试通过（Node test runner） |
@@ -491,7 +492,7 @@ UI 消费者继续只依赖 createRuntime + AgentEvent，不修改 adapter。
     proposals、capture、chat-view citation/panel/context retention）
   - knowledge-server：19 passed
   - skill-server：9 passed
-  - VSIX：`extension/agentbox-0.4.4.vsix` 152.35 KB（12 files），隔离 `--extensions-dir` 安装成功。
+  - VSIX：`extension/agentbox-1.0.0.vsix` 154.91 KB（14 files），隔离 `--extensions-dir` 安装成功。
 
 ### 11.2 Skill 剩余项
 
@@ -551,7 +552,7 @@ cd extension; npm run verify
 
 # 打包
 cd extension; npm run package
-# 产物：extension/agentbox-0.4.4.vsix
+# 产物：extension/agentbox-1.0.0.vsix
 ```
 
 Skill Server 本地 dev：
@@ -599,7 +600,7 @@ npm run dev
   客户端 group join 审批、settings/skill UI。
 - Skill 剩余项在 PENDING-2，非阻塞，暂缓；不要重做 skill。
 - KB-0/KB-1 已完成：knowledge-server、extension client/命令/注入/引用；
-  产物 `extension/agentbox-0.4.4.vsix`。
+  产物 `extension/agentbox-1.0.0.vsix`。
 - Local knowledge capture 已完成：Webview「知识」面板、内置 capture workflow、
   pending proposal、编辑/通过/拒绝、approve 后 source=conversation 发布。
 - Remote proposal 客户端/provider 接口已定义；服务端 proposal/review API 待实现。

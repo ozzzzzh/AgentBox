@@ -14,7 +14,7 @@ AgentBox 是一个面向团队知识沉淀的 VS Code coding agent：
 
 **知识资产层是护城河，coding agent 是可替换引擎。**
 
-当前版本：`extension@0.4.5`。
+当前版本：`extension@1.0.0`。
 
 ## 目录
 
@@ -34,7 +34,7 @@ AgentBox 是一个面向团队知识沉淀的 VS Code coding agent：
 ### 1.1 安装 VSIX
 
 ```bash
-code --install-extension /path/to/agentbox-0.4.5.vsix --force
+code --install-extension /path/to/agentbox-1.0.0.vsix --force
 ```
 
 安装后 Reload VS Code。
@@ -256,7 +256,7 @@ npm run package
 产物：
 
 ```text
-extension/agentbox-0.4.5.vsix
+extension/agentbox-1.0.0.vsix
 ```
 
 常用验证：
@@ -325,7 +325,7 @@ failed to write json-RPC request process is not running
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 完整架构与时序
 - [extension/README.md](extension/README.md) — VSIX 配置、UI、全部命令
-- [extension/RELEASE-NOTES-0.4.5.md](extension/RELEASE-NOTES-0.4.5.md) — 当前版本改动
+- [extension/RELEASE-NOTES-1.0.0.md](extension/RELEASE-NOTES-1.0.0.md) — 当前版本改动（汇总 0.4.4–0.4.5）
 - [agent-runtime/README.md](agent-runtime/README.md) — Runtime 设计
 - [agent-runtime/docs/HANDOFF.md](agent-runtime/docs/HANDOFF.md) — 交接与待决事项
 - [agent-runtime/docs/KNOWLEDGE-BASE.md](agent-runtime/docs/KNOWLEDGE-BASE.md) — Knowledge 设计
