@@ -1,5 +1,8 @@
 # AgentBox 系统架构
 
+> [README.md](README.md) 提供面向新人的架构摘要（总体图、Skill/Knowledge 关系、
+> 安装启动）；本文件是完整架构、时序和契约细节。
+>
 > 本文件描述 **AgentBox 整体系统**：VS Code 客户端、Agent Runtime、Skill Server、
 > Knowledge Base、模型网关以及它们之间的契约。
 >

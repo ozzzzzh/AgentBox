@@ -29,7 +29,8 @@ AgentBox 是一个面向团队知识沉淀的 VS Code coding agent：
 
 ## 2. 架构要点
 
-完整架构见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+完整架构和时序见 [ARCHITECTURE.md](ARCHITECTURE.md)。本节放 README 里最重要的
+部分：总体架构图、Skill 与 Knowledge 的关系、一次 Turn 的数据流。
 
 ### 2.1 分层
 
@@ -47,47 +48,114 @@ AgentBox 是一个面向团队知识沉淀的 VS Code coding agent：
   LiteLLM / DeepSeek / Qwen / PowerShell / Codex sandbox
 ```
 
-### 2.2 组件关系
+### 2.2 总体架构图
 
-```text
-VS Code Webview
-      │
-      ▼
-ChatViewProvider
-  ├─ ContextAssembler
-  │    ├─ mention skill
-  │    ├─ <knowledge> top-k
-  │    └─ 当前文件/选区
-  ├─ RuntimeController ──▶ AgentRuntime (Codex app-server)
-  ├─ SkillClient ──HTTP──▶ skill-server :4770
-  ├─ KnowledgeClient ─HTTP▶ knowledge-server :4771
-  └─ Knowledge Capture
-       └─ LLM proposal ──▶ 本地 pending proposal ──▶ 用户审核
+```mermaid
+flowchart LR
+  subgraph VSCode["VS Code Extension Host"]
+    Webview["Webview Chat / Editor Panel"]
+    Chat["ChatViewProvider<br/>Sessions / Settings / Approvals"]
+    Context["Context Assembler"]
+    SkillClient["SkillClient"]
+    KnowledgeClient["KnowledgeClient"]
+    Controller["RuntimeController"]
+    Runtime["AgentRuntime"]
+  end
+
+  Webview --> Chat
+  Chat --> Context
+  Chat --> Controller
+  Context --> SkillClient
+  Context --> KnowledgeClient
+  Controller --> Runtime
+  Runtime --> Codex["CodexRuntime<br/>codex app-server"]
+  Runtime -.-> OpenCode["OpenCodeRuntime<br/>stub / deferred"]
+  Codex --> Model["Model Provider<br/>DeepSeek / LiteLLM"]
+  OpenCode -.-> Model
+
+  SkillClient --> SkillServer["Skill Server :4770"]
+  KnowledgeClient --> KnowledgeServer["Knowledge Server :4771"]
+  SkillServer --> SkillData["index / policies / groups / memberships / audit"]
+  KnowledgeServer --> KBData["documents / chunks / FTS5 / audit"]
 ```
 
-### 2.3 关键边界
+本地部署：
 
-- UI/Controller 只依赖 `AgentRuntime` + `AgentEvent`，不直接依赖 Codex 私有类型；
-- Knowledge 只进入 `TurnInput.context`，**不写入 `developerInstructions`**；
-- 上下文顺序：内置安全/工作流 > required skill > `AGENTS.md` > optional skill >
-  `<knowledge>` > 当前文件/选区 > 用户 prompt；
-- Skill 是程序性规则，Knowledge 是事实性参考资料；
-- 密钥只在 Extension Host / SecretStorage，Webview 不接触 token；
-- 默认内网/localhost；公网模型必须显式 opt-in、告警、审计；
-- 文件操作限制在 workspace；shell 走审批和 Codex sandbox；
-- `agent-runtime/src` 不 import `vscode`。
+```text
+VS Code
+  ├─ AgentBox extension
+  ├─ codex.exe app-server (stdio)
+  ├─ skill-server      http://127.0.0.1:4770
+  └─ knowledge-server  http://127.0.0.1:4771
+```
+
+### 2.3 Skill 与 Knowledge 的关系
+
+两者都属于 Context 层，但解决的问题不同：
+
+| 维度 | Skill | Knowledge |
+|---|---|---|
+| 定位 | **程序性知识**：怎么做、步骤、约束、检查清单 | **事实性知识**：业务规则、表结构、接口说明、历史决策 |
+| 典型内容 | 编码规范、安全要求、排障流程、提交规范 | SQL 表结构、ETL 说明、接口文档、排障结论 |
+| 存储 | `skill.json` + `SKILL.md`，不可变版本 | `documents` + `chunks` + FTS5 索引 |
+| 生命周期 | upload → pending → approve/reject → required/enabled → sync | scan/push → chunk → index；capture → proposal → approve → publish |
+| 激活方式 | required / optional / `@skill` mention | 每轮 top-k 检索，或显式搜索 |
+| 注入位置 | `developerInstructions` | `TurnInput.context` 的 `<knowledge>` |
+| 是否可强制 | 可以 required，客户端不可关闭 | 不做 required；只作为参考证据 |
+| 冲突优先级 | required skill > 项目 `AGENTS.md` > optional skill | Knowledge 低于 Skill/项目指令；冲突时 Skill/项目指令赢 |
+| 服务 | `skill-server` :4770 | `knowledge-server` :4771 |
+| 审核对象 | Skill 包版本 | Knowledge proposal / document |
+| 引用能力 | 版本/hash/来源 | path / heading / line range / citation |
+
+关系可以概括为：
+
+```text
+Skill：告诉 Agent “应该怎么做”
+Knowledge：告诉 Agent “事实是什么、依据在哪里”
+```
+
+Knowledge 不负责规定流程；Skill 不适合承载大量事实文档。
+
+如果 Skill 需要引用事实，可以引用 Knowledge；Knowledge 冲突时不能覆盖 required Skill
+或项目指令。
+
+Context 组装顺序：
+
+```text
+内置安全/工作流
+  > remote required skill
+  > 项目 AGENTS.md
+  > local/optional skill
+  > <knowledge> top-k
+  > 当前文件/选区
+  > 用户 prompt
+```
 
 ### 2.4 一次 Chat Turn
 
 ```text
 用户 prompt
-  → 读取 Skill / 检索 Knowledge
-  → 组装 context
+  → SkillClient 读取缓存 / required
+  → KnowledgeClient 检索 top-k
+  → ContextAssembler 组装：
+       skill > AGENTS.md > optional skill > <knowledge> > file/selection
   → RuntimeController.runTurn()
   → Codex app-server
   → AgentEvent 流
-  → Webview 渲染文本/工具/审批
+  → Webview 渲染文本 / 工具 / 审批
   → 回答 + [K1] citations
+```
+
+Skill 同步与 Knowledge 入库是两条独立链路：
+
+```text
+Skill:
+  upload → pending → reviewer approve → required/enabled
+  → client sync → 本地缓存 → 注入 developerInstructions
+
+Knowledge:
+  workspace scan / remote push → upsert → chunk → FTS5
+  → search → top-k chunks → <knowledge> → citations
 ```
 
 ### 2.5 本地 Knowledge Capture
@@ -103,6 +171,20 @@ Webview「知识」按钮
 
 Local 由当前用户自己审核；Remote proposal 的客户端/provider 接口已定义，
 服务端 proposal/review API 待实现。
+
+Capture 产出的是 **Knowledge proposal**，不是 Skill。
+
+如果未来要从对话沉淀 Skill，需要单独的 Skill proposal/review 流程。
+
+### 2.6 关键边界
+
+- UI/Controller 只依赖 `AgentRuntime` + `AgentEvent`，不直接依赖 Codex 私有类型；
+- Knowledge 只进入 `TurnInput.context`，**不写入 `developerInstructions`**；
+- Skill 是程序性规则，Knowledge 是事实性参考资料；
+- 密钥只在 Extension Host / SecretStorage，Webview 不接触 token；
+- 默认内网/localhost；公网模型必须显式 opt-in、告警、审计；
+- 文件操作限制在 workspace；shell 走审批和 Codex sandbox；
+- `agent-runtime/src` 不 import `vscode`。
 
 ---
 
