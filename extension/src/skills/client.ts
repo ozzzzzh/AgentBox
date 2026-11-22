@@ -65,10 +65,11 @@ export class SkillServerClient {
 
   private async request<T>(
     path: string,
-    init: RequestInit = {}
+    init: RequestInit = {},
+    timeoutMs = 15_000
   ): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(joinUrl(this.baseUrl, path), {
         ...init,
@@ -122,6 +123,11 @@ export class SkillServerClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  async health(): Promise<boolean> {
+    const value = await this.request<{ ok?: boolean }>('/healthz', {}, 2_000);
+    return value.ok === true;
   }
 
   async listApproved(): Promise<RemoteSkillSummary[]> {

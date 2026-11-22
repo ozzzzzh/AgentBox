@@ -198,12 +198,23 @@ export interface KnowledgeProposalPatch {
   sensitivity?: Sensitivity;
 }
 
+export interface KnowledgeLibraryItem {
+  id: string;
+  title: string;
+  path: string;
+  tags: string[];
+  source: string;
+  sensitivity: Sensitivity;
+  updatedAt: string;
+}
+
 export interface KnowledgeProposalSummary {
   id: string;
   status: KnowledgeProposalStatus;
   title: string;
   summary: string;
   tags: string[];
+  target?: 'local' | 'remote';
   createdAt: string;
   reviewedAt?: string;
 }

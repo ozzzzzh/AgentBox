@@ -7,6 +7,7 @@ import type {
   WebviewToHost,
 } from '../chat-protocol';
 import type {
+  KnowledgeLibraryItem,
   KnowledgeProposalSummary,
   KnowledgeTurnInfo,
 } from '../knowledge/types';
@@ -48,6 +49,8 @@ const statusLine = byId<HTMLElement>('status');
 const skillBar = byId<HTMLElement>('skill-bar');
 const mentionMenu = byId<HTMLElement>('mention-menu');
 const contextBar = byId<HTMLElement>('context-bar');
+const knowledgeToggle = byId<HTMLButtonElement>('toggle-knowledge');
+const knowledgeLabel = byId<HTMLElement>('knowledge-label');
 const fileToggle = byId<HTMLButtonElement>('toggle-file');
 const selectionToggle = byId<HTMLButtonElement>('toggle-selection');
 const fileLabel = byId<HTMLElement>('file-label');
@@ -129,6 +132,11 @@ interface SkillGroupInfo {
 let skillGroups: SkillGroupInfo[] = [];
 let skillCategory = 'all';
 let knowledgeProposals: KnowledgeProposalSummary[] = [];
+let knowledgeServerConfigured = false;
+let knowledgeLibraryLocal: KnowledgeLibraryItem[] = [];
+let knowledgeLibraryRemote: KnowledgeLibraryItem[] = [];
+let knowledgeRemoteError: string | undefined;
+let knowledgeTab: 'proposals' | 'local' | 'server' = 'proposals';
 
 const skillsPanel = byId<HTMLElement>('skills-panel');
 const skillsScrim = byId<HTMLElement>('skills-scrim');
@@ -146,6 +154,9 @@ const knowledgeClose = byId<HTMLButtonElement>('knowledge-close');
 const knowledgeList = byId<HTMLElement>('knowledge-list');
 const knowledgeCapture = byId<HTMLButtonElement>('knowledge-capture');
 const knowledgeRefresh = byId<HTMLButtonElement>('knowledge-refresh');
+const knowledgeTabs = Array.from(
+  document.querySelectorAll<HTMLButtonElement>('[data-knowledge-tab]')
+);
 
 const timelineEl = byId<HTMLElement>('timeline');
 const timelineSummary = byId<HTMLElement>('timeline-summary');
@@ -194,6 +205,7 @@ const MAX_DIFF_CHARS = 6_000;
 const MAX_REASONING_CHARS = 20_000;
 
 let busy = false;
+let knowledgeActive = false;
 let currentContextFile: string | undefined;
 let currentSelectionKey: string | undefined;
 let turnTokens: number | null = null;
@@ -1526,13 +1538,17 @@ function updateContext(next: ContextInfo): void {
     }
   }
 
-  contextBar.hidden = file === undefined && selection === undefined;
+  contextBar.hidden = false;
+  knowledgeLabel.textContent = knowledgeActive ? '知识 ✓' : '知识';
 }
 
 function resetActiveView(): void {
   timeline = new TurnTimeline();
   stopTimelineClock();
   clearTranscript();
+  knowledgeActive = false;
+  setPressed(knowledgeToggle, false);
+  knowledgeLabel.textContent = '知识';
   turnTokens = null;
   sessionTokens = 0;
   navWindowStart = -1;
@@ -1718,7 +1734,15 @@ function handleMessage(message: HostToWebview): void {
 
     case 'knowledge.proposals':
       knowledgeProposals = message.proposals;
-      if (!knowledgePanel.hidden) renderKnowledgeProposals();
+      knowledgeServerConfigured = message.serverConfigured;
+      if (!knowledgePanel.hidden) renderKnowledgePanel();
+      return;
+
+    case 'knowledge.library':
+      knowledgeLibraryLocal = message.local;
+      knowledgeLibraryRemote = message.remote ?? [];
+      knowledgeRemoteError = message.remoteError;
+      if (!knowledgePanel.hidden) renderKnowledgePanel();
       return;
 
     case 'knowledge.open':
@@ -2042,7 +2066,13 @@ function renderKnowledgeProposals(): void {
     const meta = document.createElement('div');
     meta.className = 'knowledge-item-meta';
     const date = new Date(proposal.createdAt);
-    meta.textContent = `${knowledgeStatusLabel(proposal.status)} · ${
+    const destination =
+      proposal.status === 'published'
+        ? proposal.target === 'remote'
+          ? ' · Server'
+          : ' · 本地'
+        : '';
+    meta.textContent = `${knowledgeStatusLabel(proposal.status)}${destination} · ${
       Number.isNaN(date.getTime()) ? proposal.createdAt : date.toLocaleString()
     }${proposal.tags.length > 0 ? ` · ${proposal.tags.join(', ')}` : ''}`;
 
@@ -2062,15 +2092,39 @@ function renderKnowledgeProposals(): void {
     });
     actions.appendChild(edit);
 
-    if (proposal.status === 'pending') {
-      const approve = document.createElement('button');
-      approve.type = 'button';
-      approve.className = 'primary';
-      approve.textContent = '通过并发布';
-      approve.addEventListener('click', () => {
-        post({ type: 'knowledge.approve', id: proposal.id });
+    if (proposal.status === 'rejected') {
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'secondary';
+      remove.textContent = '删除';
+      remove.addEventListener('click', () => {
+        post({ type: 'knowledge.deleteProposal', id: proposal.id });
       });
-      actions.appendChild(approve);
+      actions.appendChild(remove);
+    }
+
+    if (proposal.status === 'pending') {
+      const local = document.createElement('button');
+      local.type = 'button';
+      local.className = 'primary';
+      local.textContent = '发布到本地';
+      local.addEventListener('click', () => {
+        post({ type: 'knowledge.approve', id: proposal.id, target: 'local' });
+      });
+      actions.appendChild(local);
+
+      const remote = document.createElement('button');
+      remote.type = 'button';
+      remote.className = 'secondary';
+      remote.textContent = '发布到 Server';
+      remote.disabled = !knowledgeServerConfigured;
+      remote.title = knowledgeServerConfigured
+        ? '发布到配置的 knowledge-server'
+        : '请先在设置 → 知识中配置 Server URL';
+      remote.addEventListener('click', () => {
+        post({ type: 'knowledge.approve', id: proposal.id, target: 'remote' });
+      });
+      actions.appendChild(remote);
 
       const reject = document.createElement('button');
       reject.type = 'button';
@@ -2087,12 +2141,91 @@ function renderKnowledgeProposals(): void {
   }
 }
 
+function renderKnowledgeLibrary(
+  items: KnowledgeLibraryItem[],
+  emptyText: string
+): void {
+  knowledgeList.replaceChildren();
+  if (items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'knowledge-empty';
+    empty.textContent = emptyText;
+    knowledgeList.appendChild(empty);
+    return;
+  }
+  for (const item of items) {
+    const row = document.createElement('div');
+    row.className = 'knowledge-item';
+
+    const title = document.createElement('div');
+    title.className = 'knowledge-item-title';
+    title.textContent = item.title;
+
+    const meta = document.createElement('div');
+    meta.className = 'knowledge-item-meta';
+    const date = new Date(item.updatedAt);
+    meta.textContent = `${item.source} · ${
+      Number.isNaN(date.getTime()) ? item.updatedAt : date.toLocaleString()
+    }${item.tags.length > 0 ? ` · ${item.tags.join(', ')}` : ''}`;
+
+    const summary = document.createElement('div');
+    summary.className = 'knowledge-item-summary';
+    summary.textContent = item.path;
+
+    const actions = document.createElement('div');
+    actions.className = 'knowledge-item-actions';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'secondary';
+    open.textContent = '打开';
+    open.addEventListener('click', () => {
+      post({ type: 'openFile', path: item.path });
+    });
+    actions.appendChild(open);
+
+    row.append(title, meta, summary, actions);
+    knowledgeList.appendChild(row);
+  }
+}
+
+function renderKnowledgePanel(): void {
+  for (const tab of knowledgeTabs) {
+    tab.classList.toggle(
+      'active',
+      tab.dataset.knowledgeTab === knowledgeTab
+    );
+  }
+  if (knowledgeTab === 'local') {
+    renderKnowledgeLibrary(
+      knowledgeLibraryLocal,
+      '本地知识库为空。发布提案到本地或执行 Reindex Knowledge。'
+    );
+    return;
+  }
+  if (knowledgeTab === 'server') {
+    if (!knowledgeServerConfigured) {
+      renderKnowledgeLibrary([], '未配置 Server URL。请在设置 → 知识中配置。');
+      return;
+    }
+    if (knowledgeRemoteError !== undefined) {
+      renderKnowledgeLibrary([], `无法读取 Server 知识库：${knowledgeRemoteError}`);
+      return;
+    }
+    renderKnowledgeLibrary(
+      knowledgeLibraryRemote,
+      'Server 知识库为空，或尚未刷新。'
+    );
+    return;
+  }
+  renderKnowledgeProposals();
+}
+
 function openKnowledgePanel(): void {
   if (!settingsPanel.hidden) closeSettingsPanel();
   if (!skillsPanel.hidden) closeSkillsPanel();
   knowledgePanel.hidden = false;
   knowledgeScrim.hidden = false;
-  renderKnowledgeProposals();
+  renderKnowledgePanel();
   post({ type: 'knowledge.refresh' });
   knowledgeClose.focus();
 }
@@ -2350,6 +2483,7 @@ function sendPrompt(): void {
     text,
     includeFile: isPressed(fileToggle),
     includeSelection: isPressed(selectionToggle),
+    includeKnowledge: knowledgeActive,
   });
 }
 
@@ -2426,11 +2560,25 @@ knowledgeClose.addEventListener('click', closeKnowledgePanel);
 knowledgeScrim.addEventListener('click', closeKnowledgePanel);
 knowledgeCapture.addEventListener('click', () => post({ type: 'knowledge.capture' }));
 knowledgeRefresh.addEventListener('click', () => post({ type: 'knowledge.refresh' }));
+for (const tab of knowledgeTabs) {
+  tab.addEventListener('click', () => {
+    const value = tab.dataset.knowledgeTab;
+    if (value === 'proposals' || value === 'local' || value === 'server') {
+      knowledgeTab = value;
+      renderKnowledgePanel();
+    }
+  });
+}
 timelineEl.addEventListener('mouseleave', hideTimelineTooltip);
 timelineToggle.addEventListener('click', toggleTimeline);
 transcript.addEventListener('scroll', scheduleQuestionNav);
 window.addEventListener('resize', scheduleQuestionNav);
 
+knowledgeToggle.addEventListener('click', () => {
+  knowledgeActive = !knowledgeActive;
+  setPressed(knowledgeToggle, knowledgeActive);
+  knowledgeLabel.textContent = knowledgeActive ? '知识 ✓' : '知识';
+});
 fileToggle.addEventListener('click', () => {
   setPressed(fileToggle, !isPressed(fileToggle));
 });

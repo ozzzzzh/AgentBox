@@ -63,6 +63,8 @@ export interface AgentRuntimeBundle {
   projectInstructionsTruncated?: boolean;
   skillUsage?: SkillUsage[];
   skillWarnings?: string[];
+  /** undefined = no remote skill server configured. */
+  skillServerOnline?: boolean;
 }
 
 /** File write policy patterns configured by the user. */
@@ -230,6 +232,19 @@ async function createSkillClient(
   );
 }
 
+export async function checkSkillServerOnline(
+  context: vscode.ExtensionContext
+): Promise<boolean | undefined> {
+  const client = await createSkillClient(context);
+  if (client === undefined) return undefined;
+  try {
+    await client.health();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function readSkillGroups(
   context: vscode.ExtensionContext
 ): Promise<ClientGroupInfo[]> {
@@ -326,7 +341,10 @@ async function acknowledgeExternalProvider(
   await context.globalState.update(key, true);
 }
 
-function readSkillsForInjection(context: vscode.ExtensionContext): {
+function readSkillsForInjection(
+  context: vscode.ExtensionContext,
+  remoteAvailable = true
+): {
   requiredText: string;
   optionalText: string;
   usage: SkillUsage[];
@@ -342,7 +360,7 @@ function readSkillsForInjection(context: vscode.ExtensionContext): {
   }
 
   let remote: Array<{ skill: SkillPackage; required: boolean }> = [];
-  if (skillSettings.serverUrl !== '') {
+  if (skillSettings.serverUrl !== '' && remoteAvailable) {
     const index = readRemoteIndex(
       context.globalStorageUri.fsPath,
       skillSettings.serverUrl
@@ -366,6 +384,10 @@ function readSkillsForInjection(context: vscode.ExtensionContext): {
       skill: item.skill,
       required: item.required,
     }));
+  } else if (skillSettings.serverUrl !== '' && !remoteAvailable) {
+    warnings.push(
+      'Skill server 离线：本轮跳过所有 remote skill（包括 cached required），仅使用 local skill。'
+    );
   }
 
   const injection = buildSkillInjection({
@@ -425,7 +447,8 @@ export async function createAgentRuntime(
 
   const home = resolveHome(context, settings, workspaceRoot);
   const project = readProjectInstructions(workspaceRoot);
-  const skills = readSkillsForInjection(context);
+  const skillServerOnline = await checkSkillServerOnline(context);
+  const skills = readSkillsForInjection(context, skillServerOnline !== false);
   const config = buildCodexRuntimeConfig({
     settings,
     workspaceRoot,
@@ -481,6 +504,7 @@ export async function createAgentRuntime(
       : {}),
     projectInstructionsTruncated: project.truncated,
     skillUsage: skills.usage,
+    ...(skillServerOnline === undefined ? {} : { skillServerOnline }),
     ...(skills.warnings.length > 0 ? { skillWarnings: skills.warnings } : {}),
   };
 }

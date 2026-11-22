@@ -80,6 +80,7 @@ flowchart LR
     Context["Context Assembler"]
     SkillClient["SkillClient"]
     KnowledgeClient["KnowledgeClient"]
+    LocalKnowledge["Local Knowledge Store<br/>globalStorage"]
     Controller["RuntimeController"]
     Runtime["AgentRuntime"]
   end
@@ -96,6 +97,7 @@ flowchart LR
   OpenCode -.-> Model
 
   SkillClient --> SkillServer["Skill Server :4770"]
+  KnowledgeClient --> LocalKnowledge
   KnowledgeClient --> KnowledgeServer["Knowledge Server :4771"]
   SkillServer --> SkillData["index / policies / groups / memberships / audit"]
   KnowledgeServer --> KBData["documents / chunks / FTS5 / audit"]
@@ -125,7 +127,7 @@ VS Code
 | 注入位置 | `developerInstructions` | `TurnInput.context` 的 `<knowledge>` |
 | 是否可强制 | 可以 required，客户端不可关闭 | 不做 required；只作为参考证据 |
 | 冲突优先级 | required skill > 项目 `AGENTS.md` > optional skill | Knowledge 低于 Skill/项目指令；冲突时 Skill/项目指令赢 |
-| 服务 | `skill-server` :4770 | `knowledge-server` :4771 |
+| 服务 | `skill-server` :4770 | 本地 globalStorage 或 `knowledge-server` :4771 |
 | 审核对象 | Skill 包版本 | Knowledge proposal / document |
 | 引用能力 | 版本/hash/来源 | path / heading / line range / citation |
 
@@ -188,7 +190,7 @@ Webview「知识」按钮
   → 独立临时 runtime 压缩当前 turn
   → 本地 pending proposal
   → 用户编辑 / 通过 / 拒绝
-  → approve 后以 source=conversation 发布到 knowledge-server
+  → approve 后发布到本地存储或 knowledge-server（取决于 Server URL）
 ```
 
 Local 由当前用户自己审核；Remote proposal 的客户端/provider 接口已定义，
@@ -227,7 +229,9 @@ agentBox/
 各子目录是独立 npm package，没有根 workspace。
 
 `skill-server/` 和 `knowledge-server/` **不会打包进 VSIX**；它们是独立进程，
-需要单独启动或部署。VSIX 只包含扩展宿主代码、Webview 资源和媒体文件。
+需要单独启动或部署。VSIX 只包含扩展宿主代码、Webview 资源、媒体文件，以及
+扩展本地知识/提案存储逻辑。Server URL 为空时，Knowledge 使用扩展
+`globalStorage` 中的本地存储，不需要启动 knowledge-server。
 
 ---
 
@@ -272,9 +276,10 @@ npm run dev:seed
 - 管理页：`http://127.0.0.1:4770/admin`，开发模式自动登录
 - 扩展本地 loopback 读取可匿名；上传/审批需要 `dev-author` / `dev-admin`
 
-### 5.3 启动 Knowledge Server（使用知识库时需要）
+### 5.3 启动 Knowledge Server（使用远程/共享知识库时需要）
 
-`agentbox.knowledge.serverUrl` 为空时知识检索关闭；不影响普通聊天。
+`agentbox.knowledge.serverUrl` 为空时使用扩展本地知识存储（`globalStorage`），
+不需要启动 server；不影响普通聊天。
 
 ```powershell
 cd knowledge-server
@@ -382,11 +387,14 @@ npm run verify
 - required skill 默认勾选且不可关闭；
 - 输入 `@skill-id` 只对当前 prompt 生效；
 - 远程 Skill 通过 **AgentBox: Sync Remote Skills** 同步；
+- server 离线时跳过所有 remote skill（包括 cached required），只使用 local skill；
 - 组权限通过设置 → Skill → Skill Groups 申请。
 
 ### 7.3 Knowledge
 
-- 设置 → 知识填 Knowledge Server URL；
+- 设置 → 知识：Server URL 留空 = 本地知识；填地址 = 远程/共享知识；
+- 输入框上方 **知识** 按钮默认关闭；勾选后该轮才检索知识，避免 token 消耗；
+- **知识** 面板包含 **提案 / 本地知识 / Server 知识** 三个 Tab；
 - **AgentBox: Reindex Knowledge** 扫描 workspace；
 - **AgentBox: Search Knowledge** 搜索并打开命中行；
 - 回答下方显示 `[K1] path:line`，点击打开源文件。
@@ -397,7 +405,10 @@ npm run verify
 2. 顶栏 **知识** → **沉淀当前对话**；
 3. 等待 capture workflow 生成 pending proposal；
 4. 点击 **编辑** 修改 Markdown；
-5. **通过并发布** 后才进入 knowledge-server；
+5. 审核时可选择 **发布到本地** 或 **发布到 Server**：
+   - 本地：写入扩展 globalStorage；
+   - Server：需要先在设置中配置 Knowledge Server URL；
+6. rejected 提案可点击 **删除**；本地/Server 知识可在对应 Tab 查看并打开；
 6. 拒绝则标记为 rejected。
 
 ---

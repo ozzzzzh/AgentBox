@@ -415,12 +415,12 @@
         "agentbox.knowledge.serverUrl": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Knowledge server base URL, e.g. `http://127.0.0.1:4771` or `https://knowledge.example.internal`. Empty = knowledge retrieval is off. Plain HTTP is only allowed for localhost."
+          "markdownDescription": "Remote knowledge server base URL, e.g. `http://127.0.0.1:4771` or `https://knowledge.example.internal`. Empty = local-only knowledge (extension globalStorage). Plain HTTP is only allowed for localhost."
         },
         "agentbox.knowledge.autoRetrieve": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Retrieve top-k knowledge chunks for each prompt. Has no effect when `serverUrl` is empty."
+          "markdownDescription": "Allow knowledge retrieval when the composer knowledge toggle is on. When `serverUrl` is empty, the local knowledge store is used. Disable to block all knowledge retrieval."
         },
         "agentbox.knowledge.topK": {
           "type": "number",

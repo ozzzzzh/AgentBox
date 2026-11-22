@@ -215,6 +215,7 @@ export function listLocalProposalSummaries(
     title: proposal.title,
     summary: proposal.summary,
     tags: proposal.tags,
+    target: proposal.target,
     createdAt: proposal.createdAt,
     ...(proposal.reviewedAt !== undefined
       ? { reviewedAt: proposal.reviewedAt }
@@ -265,10 +266,30 @@ export function setLocalProposalStatus(
   return writeProposal(globalStorage, updated, content);
 }
 
+export function deleteLocalProposal(
+  globalStorage: string,
+  id: string
+): boolean {
+  const metadata = readMetadata(globalStorage, id);
+  if (metadata === undefined) return false;
+  for (const path of [
+    metadataPath(globalStorage, id),
+    localProposalContentPath(globalStorage, id),
+  ]) {
+    try {
+      rmSync(path, { force: true });
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+  return true;
+}
+
 export function markLocalProposalPublished(
   globalStorage: string,
   id: string,
-  docId: string
+  docId: string,
+  target?: 'local' | 'remote'
 ): KnowledgeProposal | undefined {
   const metadata = readMetadata(globalStorage, id);
   if (metadata === undefined) return undefined;
@@ -276,6 +297,7 @@ export function markLocalProposalPublished(
   const updated: ProposalMetadata = {
     ...metadata,
     status: 'published',
+    ...(target !== undefined ? { target } : {}),
     publishedDocId: docId,
     reviewedAt: metadata.reviewedAt ?? new Date().toISOString(),
   };

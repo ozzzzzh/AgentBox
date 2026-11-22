@@ -70,7 +70,7 @@ knowledge-server (Node 24, 本地或内网)
 - 索引 workspace 内的 Markdown / 文本 / 代码 / SQL；
 - 手动 **AgentBox: Reindex Knowledge**；
 - SQLite FTS5 检索；
-- 每轮自动检索 top-k（可配置关闭）；
+- 输入框上方勾选「知识」后，该轮检索 top-k；默认不勾选；
 - 注入 `<knowledge>` 上下文 + 引用；
 - UI 显示引用 chips，点击打开源文件/行号；
 - 本地 knowledge-server + token；
@@ -233,7 +233,8 @@ final = α * bm25_norm + (1-α) * cosine(query_embedding, chunk_embedding)
 
 ### 6.3 查询触发
 
-- `autoRetrieve=true`：每条 prompt 检索 top-k；
+- 输入框上方 **知识** 按钮默认关闭；勾选后才检索 top-k；
+- `agentbox.knowledge.autoRetrieve=false` 可全局禁止知识检索；
 - 显式 `@knowledge <query>` 或 **AgentBox: Search Knowledge**；
 - 文件上下文存在时，把文件名/选区作为 query 的一部分；
 - `topK` 默认 5，`maxChars` 默认 6,000。
@@ -505,6 +506,12 @@ Webview「知识」按钮 / AgentBox: Capture Knowledge
 
 约束：
 
+- 审核 proposal 时可选择 **发布到本地** 或 **发布到 Server**；
+- 发布到本地时写扩展 globalStorage
+  (`<globalStorage>/agentbox/knowledge/local/`)，不需要 knowledge-server；
+- 发布到 Server 需要配置 `agentbox.knowledge.serverUrl`；
+- `serverUrl` 为空时，自动检索和 Reindex 使用本地知识存储；
+- 本地 Reindex 会扫描 workspace 写入扩展 globalStorage；不删除已失效文档；
 - capture 是 AgentBox 内置 workflow，不是 local/remote Skill Registry 中的 skill；
 - 不会自动每轮运行；当前只支持手动触发；
 - proposal 不直接进入检索，必须审核发布；

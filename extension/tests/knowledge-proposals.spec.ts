@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createLocalProposal,
+  deleteLocalProposal,
   listLocalProposalSummaries,
   listLocalProposals,
   localProposalContentPath,
@@ -91,9 +92,22 @@ describe('local knowledge proposals', () => {
     const rejected = setLocalProposalStatus(root, proposal.id, 'rejected');
     expect(rejected?.status).toBe('rejected');
 
-    const published = markLocalProposalPublished(root, proposal.id, 'd_123');
+    const published = markLocalProposalPublished(root, proposal.id, 'd_123', 'remote');
     expect(published?.status).toBe('published');
     expect(published?.publishedDocId).toBe('d_123');
-    expect(listLocalProposalSummaries(root)[0]?.status).toBe('published');
+    expect(published?.target).toBe('remote');
+    expect(listLocalProposalSummaries(root)[0]).toMatchObject({
+      status: 'published',
+      target: 'remote',
+    });
+  });
+
+  it('deletes rejected proposals and their markdown files', () => {
+    const root = tempDir();
+    const proposal = create(root);
+    setLocalProposalStatus(root, proposal.id, 'rejected');
+    expect(deleteLocalProposal(root, proposal.id)).toBe(true);
+    expect(listLocalProposals(root)).toHaveLength(0);
+    expect(existsSync(localProposalContentPath(root, proposal.id))).toBe(false);
   });
 });

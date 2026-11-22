@@ -1,9 +1,18 @@
+import { existsSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import {
   KnowledgeServerClient,
   KnowledgeServerError,
 } from './knowledge/client';
+import {
+  localDocumentId,
+  localKnowledgeContentPath,
+  localKnowledgeStatus,
+  searchLocalKnowledge,
+  upsertLocalKnowledge,
+} from './knowledge/local-store';
+import { localProposalContentPath } from './knowledge/proposals';
 import {
   scanWorkspace,
   workspaceRelativePath,
@@ -93,18 +102,11 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function openFileAtLine(
-  path: string,
-  startLine: number
+async function showDocumentAtLine(
+  absolute: string,
+  startLine: number,
+  displayPath: string
 ): Promise<void> {
-  const root = currentRoot();
-  if (root === undefined) {
-    void vscode.window.showWarningMessage('AgentBox: 请先打开一个工作区。');
-    return;
-  }
-  if (path === '' || isAbsolute(path)) return;
-  const absolute = resolve(root, path);
-  if (workspaceRelativePath(root, absolute) === undefined) return;
   try {
     const document = await vscode.workspace.openTextDocument(
       vscode.Uri.file(absolute)
@@ -124,9 +126,48 @@ async function openFileAtLine(
     );
   } catch {
     void vscode.window.showWarningMessage(
-      `AgentBox: 知识引用已过期或文件不存在：${path}`
+      `AgentBox: 知识引用已过期或文件不存在：${displayPath}`
     );
   }
+}
+
+function localKnowledgeFile(
+  context: vscode.ExtensionContext,
+  path: string
+): string | undefined {
+  if (!path.startsWith('knowledge/')) return undefined;
+  const name = path.slice('knowledge/'.length);
+  if (!/^[A-Za-z0-9_-]+\.md$/.test(name)) return undefined;
+  const id = name.slice(0, -'.md'.length);
+  const storage = context.globalStorageUri.fsPath;
+  const candidates = [
+    localKnowledgeContentPath(storage, id),
+    localProposalContentPath(storage, id),
+  ];
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+async function openFileAtLine(
+  context: vscode.ExtensionContext,
+  path: string,
+  startLine: number
+): Promise<void> {
+  if (path === '' || isAbsolute(path)) return;
+
+  const localFile = localKnowledgeFile(context, path);
+  if (localFile !== undefined) {
+    await showDocumentAtLine(localFile, startLine, path);
+    return;
+  }
+
+  const root = currentRoot();
+  if (root === undefined) {
+    void vscode.window.showWarningMessage('AgentBox: 请先打开一个工作区。');
+    return;
+  }
+  const absolute = resolve(root, path);
+  if (workspaceRelativePath(root, absolute) === undefined) return;
+  await showDocumentAtLine(absolute, startLine, path);
 }
 
 async function listServerHashes(
@@ -194,17 +235,74 @@ function summarize(
   return result;
 }
 
+async function reindexLocalKnowledge(
+  context: vscode.ExtensionContext,
+  root: string,
+  settings: ReturnType<typeof readKnowledgeSettings>
+): Promise<void> {
+  try {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: 'AgentBox: 索引本地知识库',
+        cancellable: true,
+      },
+      async (progress, token) => {
+        progress.report({ message: '扫描 workspace…' });
+        const scan = await scanWorkspace({
+          root,
+          io: scannerIo,
+          maxFiles: 5_000,
+          maxFileBytes: settings.maxFileBytes,
+        });
+        let indexed = 0;
+        for (const document of scan.documents) {
+          if (token.isCancellationRequested) throw new vscode.CancellationError();
+          upsertLocalKnowledge(context.globalStorageUri.fsPath, {
+            id: localDocumentId(document.path),
+            title: document.path.split('/').pop() ?? document.path,
+            path: document.path,
+            content: document.content,
+            source: 'workspace',
+          });
+          indexed += 1;
+          if (indexed % 20 === 0) {
+            progress.report({ message: `已索引 ${indexed}/${scan.documents.length}…` });
+          }
+        }
+        const status = localKnowledgeStatus(context.globalStorageUri.fsPath);
+        void vscode.window.showInformationMessage(
+          `AgentBox: 本地知识索引完成。本次 ${indexed} 个文档；` +
+            `本地共 ${status.documents} 个文档 / ${status.chunks} 个 chunk。`
+        );
+      }
+    );
+  } catch (error) {
+    if (error instanceof vscode.CancellationError) {
+      void vscode.window.showInformationMessage('AgentBox: 本地知识索引已取消。');
+      return;
+    }
+    void vscode.window.showErrorMessage(
+      `AgentBox: 本地知识索引失败：${errorMessage(error)}`
+    );
+  }
+}
+
 async function reindexKnowledge(
   context: vscode.ExtensionContext
 ): Promise<void> {
-  const client = await resolveClient(context);
-  if (client === undefined) return;
   const root = currentRoot();
   if (root === undefined) {
     void vscode.window.showWarningMessage('AgentBox: 请先打开一个工作区。');
     return;
   }
   const settings = readKnowledgeSettings();
+  if (settings.serverUrl === '') {
+    await reindexLocalKnowledge(context, root, settings);
+    return;
+  }
+  const client = await resolveClient(context);
+  if (client === undefined) return;
   const collection = collectionForWorkspace(root, settings);
 
   try {
@@ -312,13 +410,6 @@ async function reindexKnowledge(
 async function searchKnowledge(
   context: vscode.ExtensionContext
 ): Promise<void> {
-  const client = await resolveClient(context);
-  if (client === undefined) return;
-  const root = currentRoot();
-  if (root === undefined) {
-    void vscode.window.showWarningMessage('AgentBox: 请先打开一个工作区。');
-    return;
-  }
   const query = await vscode.window.showInputBox({
     title: 'AgentBox: 搜索知识库',
     prompt: '输入关键词，例如“intern_test 增量同步”',
@@ -327,12 +418,31 @@ async function searchKnowledge(
   if (query === undefined || query.trim() === '') return;
   const settings = readKnowledgeSettings();
   try {
-    const response = await client.search({
-      collection: collectionForWorkspace(root, settings),
-      query: query.trim(),
-      topK: settings.topK,
-      maxChars: settings.maxChars,
-    });
+    const response =
+      settings.serverUrl === ''
+        ? searchLocalKnowledge(context.globalStorageUri.fsPath, {
+            query: query.trim(),
+            topK: settings.topK,
+            maxChars: settings.maxChars,
+          })
+        : await (async () => {
+            const client = await resolveClient(context);
+            if (client === undefined) return undefined;
+            const root = currentRoot();
+            if (root === undefined) {
+              void vscode.window.showWarningMessage(
+                'AgentBox: 请先打开一个工作区。'
+              );
+              return undefined;
+            }
+            return client.search({
+              collection: collectionForWorkspace(root, settings),
+              query: query.trim(),
+              topK: settings.topK,
+              maxChars: settings.maxChars,
+            });
+          })();
+    if (response === undefined) return;
     if (response.results.length === 0) {
       void vscode.window.showInformationMessage('AgentBox: 没有找到相关知识。');
       return;
@@ -348,7 +458,7 @@ async function searchKnowledge(
       { placeHolder: `找到 ${response.results.length} 个结果`, ignoreFocusOut: true }
     );
     if (picked !== undefined) {
-      await openFileAtLine(picked.path, picked.line);
+      await openFileAtLine(context, picked.path, picked.line);
     }
   } catch (error) {
     void vscode.window.showErrorMessage(
@@ -360,6 +470,19 @@ async function searchKnowledge(
 async function knowledgeStatus(
   context: vscode.ExtensionContext
 ): Promise<void> {
+  const settings = readKnowledgeSettings();
+  if (settings.serverUrl === '') {
+    const status = localKnowledgeStatus(context.globalStorageUri.fsPath);
+    const last =
+      status.lastIndexedAt === null
+        ? '未索引'
+        : new Date(status.lastIndexedAt).toLocaleString();
+    void vscode.window.showInformationMessage(
+      `AgentBox Local Knowledge：${status.documents} 个文档，` +
+        `${status.chunks} 个 chunk；最后更新：${last}`
+    );
+    return;
+  }
   const client = await resolveClient(context);
   if (client === undefined) return;
   try {

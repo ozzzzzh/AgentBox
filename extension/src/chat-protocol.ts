@@ -3,6 +3,7 @@ import type {
   StopReason,
 } from '@agentbox/runtime';
 import type {
+  KnowledgeLibraryItem,
   KnowledgeProposalSummary,
   KnowledgeTurnInfo,
 } from './knowledge/types';
@@ -121,7 +122,17 @@ export type HostToWebview =
   | { type: 'skills'; skills: SkillUsage[] }
   | { type: 'skills.catalog'; items: SkillCatalogItem[] }
   | { type: 'skills.groups'; groups: ClientGroupInfo[] }
-  | { type: 'knowledge.proposals'; proposals: KnowledgeProposalSummary[] }
+  | {
+      type: 'knowledge.proposals';
+      proposals: KnowledgeProposalSummary[];
+      serverConfigured: boolean;
+    }
+  | {
+      type: 'knowledge.library';
+      local: KnowledgeLibraryItem[];
+      remote?: KnowledgeLibraryItem[];
+      remoteError?: string;
+    }
   | { type: 'knowledge.open' }
   | { type: 'context'; context: ContextInfo }
   | { type: 'settings'; values: SettingsValues }
@@ -138,6 +149,7 @@ export type WebviewToHost =
       text: string;
       includeFile: boolean;
       includeSelection: boolean;
+      includeKnowledge?: boolean;
     }
   | { type: 'cancel' }
   | {
@@ -166,9 +178,11 @@ export type WebviewToHost =
   | { type: 'knowledge.open' }
   | { type: 'knowledge.refresh' }
   | { type: 'knowledge.capture' }
-  | { type: 'knowledge.approve'; id: string }
+  | { type: 'knowledge.approve'; id: string; target?: 'local' | 'remote' }
   | { type: 'knowledge.reject'; id: string }
   | { type: 'knowledge.edit'; id: string }
+  | { type: 'knowledge.deleteProposal'; id: string }
+  | { type: 'knowledge.library.request' }
   | { type: 'session.new' }
   | { type: 'session.select'; id: string }
   | { type: 'session.close'; id: string; confirm: boolean };

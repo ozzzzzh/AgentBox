@@ -277,6 +277,7 @@ describe('ChatViewProvider', () => {
     expect(webview.html).toContain('id="knowledge-panel"');
     expect(webview.html).toContain('id="knowledge-list"');
     expect(webview.html).toContain('id="knowledge-capture"');
+    expect(webview.html).toContain('id="toggle-knowledge"');
     expect(webview.html).toContain('id="toggle-file"');
     expect(webview.html).toContain('id="submit"');
     expect(webview.html).toContain('id="setting-approval"');
@@ -648,6 +649,7 @@ describe('ChatViewProvider', () => {
         text: '解释增量同步',
         includeFile: false,
         includeSelection: false,
+        includeKnowledge: true,
       });
 
       await waitFor(() =>

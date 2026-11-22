@@ -124,6 +124,8 @@ VS Code extension
 - 调用 `AgentRuntime`，把 `AgentEvent` 映射为 UI；
 - SkillClient：远程同步、缓存、组申请；
 - KnowledgeClient + Provider 接口：本地/远程检索；
+  - Server URL 为空：扩展 `globalStorage` 本地知识存储；
+  - Server URL 已配置：HTTP knowledge-server；
 - 内置 Knowledge Capture workflow：LLM 压缩当前 turn → 本地 pending proposal →
   用户审核/编辑 → 发布；
 - 本地 proposal 存 extension globalStorage，远程 proposal 走 HTTP（接口已定，
@@ -191,6 +193,11 @@ admin > reviewer > author > reader
 ### 3.4 Knowledge Server
 
 位置：`knowledge-server/`；契约见 `knowledge-server/docs/CONTRACT.md`。
+
+Knowledge 有两种运行形态：
+
+- **Local**：`serverUrl` 为空，扩展在 `globalStorage` 内保存/检索本地知识；
+- **Remote**：配置 serverUrl，使用 HTTP knowledge-server（本地 loopback 或团队服务）。
 
 职责：
 

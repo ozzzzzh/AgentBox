@@ -207,7 +207,7 @@ VS Code 集成在下一阶段通过消费者/adapter 完成。
 | `extension/src/context.ts` / `webview/chat.ts` / `webview/timeline.ts` / `media/chat.css` | ✅ **UI-1**：上下文拼接、vanilla 前端、活动时间线模型、主题样式 |
 | `extension/src/skills/*` / `skill-commands.ts` / `../../skill-server/` | ✅ **Skill S1–S6**：本地/远程 skill、包校验/hash、Registry、审批/required、同步、注入、命令/UI |
 | `../../extension/agentbox-0.3.0.vsix` | ✅ 123.04 KB（9 files），UI-1 历史产物 |
-| `../../extension/agentbox-0.4.0.vsix` | ✅ 139.59 KB（9 files），KB-0/KB-1 + local capture；隔离安装成功 |
+| `../../extension/agentbox-0.4.0.vsix` | ✅ 144.67 KB（9 files），KB-0/KB-1 + local capture；隔离安装成功 |
 | `npm run verify`（runtime） | ✅ 142 个测试通过（含 CLI 15、eval 9） |
 | `npm run verify`（extension） | ✅ 95 个测试通过（controller 11、settings 8、chat-view 19、timeline 5、context 5、webview-ui 6、file-policy 6、project-instructions 4、loop-detector 4、task-profile 2、skills-model 4、skills-store 5、skills-injection 5、skills-catalog 2、skills-mentions 3、skills-client 5、bundle 1） |
 | `npm test`（skill-server） | ✅ 9 个测试通过（Node test runner） |
@@ -423,6 +423,8 @@ UI 消费者继续只依赖 createRuntime + AgentEvent，不修改 adapter。
   - 设置 UI：模型 / Skill / 知识 / 高级竖向菜单；固定高度；底部固定保存/取消；
     Skill Groups 多选下拉；skill 抽屉左侧分类菜单（全部/本地/服务器组）。
   - 本地上传 token fallback：loopback 未设置 token 时尝试 `dev-admin`。
+  - server 健康检查：配置 serverUrl 时，离线会跳过所有 remote skill（含 cached required），
+    仅使用 local skill；健康检查 2s 超时。
 - **Knowledge Base（KB-0/KB-1，2026-11-12）**：
   - 独立 `knowledge-server/`：Node 24 内置 `node:sqlite` + FTS5 trigram，无 native 依赖；
   - API：status/collections/documents upsert/delete/search/reindex/maintenance/audit；
@@ -436,15 +438,16 @@ UI 消费者继续只依赖 createRuntime + AgentEvent，不修改 adapter。
   - 内置 capture workflow（不是 local/remote skill）：独立临时 runtime 压缩当前 turn；
   - 生成 pending proposal，存 `<globalStorage>/agentbox/knowledge/proposals/`；
   - Webview「知识」面板：编辑 Markdown、通过并发布、拒绝；
-  - approve 后以 `source: conversation` 调用 `POST /v1/knowledge/documents`；
+  - approve：Server URL 为空时写入扩展本地知识存储；配置后以
+    `source: conversation` 调用 `POST /v1/knowledge/documents`；
   - Remote proposal 客户端接口已定义（`client.ts`/`provider.ts`），服务端 proposal API 待实现。
 - **测试/产物**：
   - runtime：142 passed
-  - extension：117 passed / 1 skipped（knowledge client/scanner/formatter、
+  - extension：121 passed / 1 skipped（knowledge client/scanner/formatter、
     proposals、capture、chat-view citation/panel/context retention）
   - knowledge-server：19 passed
   - skill-server：9 passed
-  - VSIX：`extension/agentbox-0.4.0.vsix` 139.59 KB（9 files），隔离 `--extensions-dir` 安装成功。
+  - VSIX：`extension/agentbox-0.4.0.vsix` 144.67 KB（9 files），隔离 `--extensions-dir` 安装成功。
 
 ### 11.2 Skill 剩余项
 
@@ -561,7 +564,8 @@ npm run dev
 当前：KB-0/KB-1 已完成（knowledge-server + extension client/命令/注入/引用）。
 下一步：Remote proposal/review API（knowledge-server）或 KB-4（评估集、ACL、云端部署）。
 1. 先读 knowledge-server/docs/CONTRACT.md；
-2. 本地 `cd knowledge-server; npm run dev`，扩展设置 → 知识填 4771；
+2. 本地知识可不启动 server（Server URL 留空）；远程/共享知识再
+   `cd knowledge-server; npm run dev` 并填 4771；
 3. 执行 Reindex/Search，验证 `<knowledge>` 注入与引用 chips；
 4. 不要先动 runtime；不改 pluginVersion/。
 

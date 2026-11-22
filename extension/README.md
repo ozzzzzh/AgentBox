@@ -41,7 +41,7 @@
 cd extension
 npm install
 npm run build      # 构建 runtime + typecheck + esbuild（extension + webview）
-npm test           # 117 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / knowledge-* / bundle）
+npm test           # 121 个测试（controller / settings / chat-view / timeline / context / webview-ui / file-policy / project-instructions / loop-detector / task-profile / skills-* / knowledge-* / bundle）
 npm run verify
 ```
 
@@ -91,7 +91,7 @@ code --install-extension agentbox-0.4.0.vsix
 | `agentbox.skills.autoSync` | `true` |
 | `agentbox.skills.requiredMissing` | `warn`（可选 `block`） |
 | `agentbox.knowledge.serverUrl` | 空 = 关闭知识检索 |
-| `agentbox.knowledge.autoRetrieve` | `true`（Server URL 为空时不生效） |
+| `agentbox.knowledge.autoRetrieve` | `true`（允许检索；仍需在输入框上方勾选「知识」） |
 | `agentbox.knowledge.topK` | `5` |
 | `agentbox.knowledge.maxChars` | `6000` |
 | `agentbox.knowledge.collection` | 空 = 从 workspace 根目录派生 |
@@ -299,10 +299,11 @@ CodexRuntime 启动时读取 `windowsSandbox/readiness`：
 - 生产环境在设置浮层填 **Server Token**（SecretStorage）；本地 loopback dev server 可匿名读取；
 - `AgentBox: Sync Remote Skills` 拉取 approved + required，校验 hash / id / version 后缓存；
 - `AgentBox: Upload Skill` 上传本地 skill，服务端进入 `pending`；
-- required skill 不可关闭，始终注入；
+- required skill 在 server 在线时不可关闭，始终注入；
 - 设置 → Skill → Skill Groups 可多选申请加入组；需要 server admin 审批；
 - 只有已加入组的 skill 才会同步；未分组 skill 不受组限制；
-- 同步失败默认使用缓存并警告；`skills.requiredMissing=block` 可阻断。
+- **server 离线时**：健康检查失败，本轮跳过所有 remote skill（包括 cached required），只使用 local skill，避免离线强制注入；server 恢复后重新检测；
+- server 在线但缓存缺失时，`skills.requiredMissing=block` 可阻断。
 
 本地联调：
 
@@ -335,9 +336,13 @@ npm run dev:seed
 
 ### 3.10 知识库（Knowledge）
 
-Knowledge Base 把 workspace 文档切成 chunk，存入独立 `knowledge-server/`
-（Node 24 + SQLite FTS5），每轮按 prompt 检索 top-k 后注入 `<knowledge>` 参考上下文；
-不会写入 `developerInstructions`，也不会覆盖 Skill/项目指令。
+Knowledge Base 支持两种模式：
+
+- **Local**：`Server URL` 留空，知识存在扩展 `globalStorage`，无需启动 server；
+- **Remote**：配置 `knowledge-server/`（Node 24 + SQLite FTS5），通过 HTTP 检索。
+
+每轮按 prompt 检索 top-k 后注入 `<knowledge>` 参考上下文；不会写入
+`developerInstructions`，也不会覆盖 Skill/项目指令。
 
 **本地启动**：
 
@@ -350,17 +355,19 @@ npm run dev
 
 扩展设置 → **知识**：
 
-- Server URL：`http://127.0.0.1:4771`；留空 = 关闭知识检索；
+- Server URL：`http://127.0.0.1:4771`；留空 = 仅使用扩展本地知识存储；
 - Server Token：只写入 SecretStorage；本地 loopback dev 可匿名读取；
-- 每轮自动检索：默认开启，但 Server URL 为空时不生效；
+- 知识检索默认不激活：输入框上方 **知识** 按钮勾选后才检索；
+- Server URL 为空时检索本地知识；配置后检索 remote；
 - Top K / 最大字符：默认 5 / 6000；
 - **重建索引 / 搜索 / 状态** 按钮直接在设置页执行。
 
 命令：
 
 - `AgentBox: Reindex Knowledge`：扫描 workspace（跳过 `.git`、`node_modules`、
-  `dist`、`.probe`、密钥文件、二进制、>1MB 文件），只上传新增/变化文档，
-  并清理服务端已删除路径；
+  `dist`、`.probe`、密钥文件、二进制、>1MB 文件）；
+  - Server URL 为空：写入扩展本地知识存储；
+  - Server URL 已配置：只上传新增/变化文档，并清理服务端已删除路径；
 - `AgentBox: Search Knowledge`：搜索并打开命中文件行；
 - `AgentBox: Knowledge Status`：文档/chunk/最后索引时间；
 - `AgentBox: Set Knowledge Server Token`：SecretStorage；
@@ -379,16 +386,25 @@ mention skill
 回答下方显示 `[K1] path:line` 引用 chips，点击打开并定位到源文件行。
 知识服务不可达时只显示 warning，turn 继续。
 
-**知识沉淀（Local，当前 POC）**：
+**知识沉淀（Local / Server）**：
 
-- 顶栏 **知识** 按钮打开「知识提案」面板；
+- 顶栏 **知识** 按钮打开知识面板，包含三个 Tab：
+  - **提案**：capture 生成的待审核 proposal；
+  - **本地知识**：扩展 globalStorage 中已发布的知识；
+  - **Server 知识**：配置 knowledge-server 后可查看服务端 documents；
 - **沉淀当前对话**：使用内置 capture workflow（不是 local/remote skill），
   取当前 turn 的 user/assistant 内容，让模型压缩成结构化 proposal；
 - 结果先写入 `<globalStorage>/agentbox/knowledge/proposals/<id>.json/.md`，
   状态 `pending`，**不会直接进入检索**；
-- 点击 **编辑** 打开 Markdown 修改；**通过并发布** 才调用本地 knowledge-server
-  的 `POST /v1/knowledge/documents`（`source: conversation`）；
-- **拒绝** 将 proposal 标记为 rejected；
+- 点击 **编辑** 打开 Markdown 修改；
+- 审核时可以选择发布目标：
+  - **发布到本地**：写入扩展 local knowledge（`<globalStorage>/agentbox/knowledge/local/`），
+    无需 server；
+  - **发布到 Server**：调用配置的 knowledge-server
+    `POST /v1/knowledge/documents`（`source: conversation`）；
+    未配置 Server URL 时该按钮禁用；
+- **拒绝** 将 proposal 标记为 rejected；rejected 提案可点击 **删除** 彻底移除；
+- 知识库 Tab 中的条目可直接 **打开**；
 - Local 由当前用户自己审核；Remote proposal HTTP 接口已在
   `src/knowledge/client.ts` / `provider.ts` 中定义，服务端 proposal API 尚未实现，
   后续可热拔插。
@@ -396,7 +412,8 @@ mention skill
 > capture workflow 当前会启动一个独立的临时 runtime 来压缩上下文，避免污染主会话
 > thread；手动触发，不会每轮自动运行。
 
-> 索引会把 workspace 内容发送到 knowledge server；远程 server 也会看到用户 prompt。
+> Server URL 为空时，workspace 索引和 capture 发布都留在本地扩展存储，不发网络请求。
+> 配置远程 server 后，索引内容会发送到该服务，server 也会看到用户 prompt。
 > `http://` 只允许 localhost，非 loopback 必须 HTTPS + token。当前 MVP 没有
 > per-collection ACL，不要直接暴露给不受信任的团队。
 
@@ -413,6 +430,7 @@ mention skill
 4. 在输入框输入任务，按 **Enter** 发送（**Shift+Enter** 换行）；输入框随内容自动增高。
 5. 打开/切换文件时，**当前文件** 默认选中（带 ✓）；
    选中新的文本区间时，**选区** 也默认选中；两者都可点击取消。
+   **知识** 默认不选中；勾选后该轮才检索知识，避免不必要的 token 消耗。
 6. 对话右侧中间有 **问题导航条**：每个用户问题一个圆点，点击跳转并高亮，
    hover 显示前 20 字摘要；最多只显示当前位置附近的 10 个问题，滚动时窗口自动滑动。
 7. 运行时会显示 **思考中… / 生成中… / 执行工具… / 等待审批…** 指示；
@@ -565,11 +583,12 @@ assistant 消息按时间顺序显示 **处理过程**：思考、工具、中�
 - 项目指令只读取 workspace 根目录，不支持嵌套 `AGENTS.md`。
 - Skill 的 on-demand 触发（路径/关键词）尚未实现；目前按 `activation=always` 或 `skills.enabled` 注入。
 - 远程 Skill 在扩展激活/手动同步时拉取；同步后需要下一条 prompt 才重建会话并生效。
+- server 离线时 remote skill 不注入；健康检查有 2s 超时，可能增加首轮 prompt 延迟。
 - Knowledge 索引是手动/命令触发的，不做文件 watcher；修改文档后需重新 Reindex。
 - 引用行号是索引时快照；文件变化后可能 stale，点击时会提示文件缺失或行号越界。
 - Knowledge server 当前没有 per-collection ACL；`collection` + token role 只做命名空间隔离。
 - 中文 1–2 字查询走 `instr` fallback，召回/排序弱于 trigram；后续可加 jieba/embedding。
-- Knowledge 自动检索会把 prompt 和文件上下文摘要发给 server；远程部署前需评估隐私边界。
+- 勾选「知识」后，检索会把 prompt 和文件上下文摘要发给 local/server knowledge store；远程部署前需评估隐私边界。
 - Local 知识提案存在扩展 globalStorage，不跨机器同步；Remote proposal API 目前只是客户端接口，服务端 proposal/review 端点待实现。
 - capture workflow 会启动独立临时 runtime，首次执行有 Codex 启动开销；只支持手动触发。
 - 提案编辑目前修改 Markdown 正文；标题/标签的结构化编辑 UI 尚未提供。

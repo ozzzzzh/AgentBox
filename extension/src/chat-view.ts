@@ -22,7 +22,13 @@ import {
 import { KnowledgeServerClient } from './knowledge/client';
 import { formatKnowledge } from './knowledge/formatter';
 import {
+  listLocalKnowledgeSummaries,
+  searchLocalKnowledge,
+  upsertLocalKnowledge,
+} from './knowledge/local-store';
+import {
   createLocalProposal,
+  deleteLocalProposal,
   listLocalProposalSummaries,
   localProposalContentPath,
   markLocalProposalPublished,
@@ -34,9 +40,13 @@ import {
   knowledgeServerTokenKey,
   readKnowledgeSettings,
 } from './knowledge/settings';
-import type { KnowledgeTurnInfo } from './knowledge/types';
+import type {
+  KnowledgeLibraryItem,
+  KnowledgeTurnInfo,
+} from './knowledge/types';
 import { ToolLoopDetector } from './loop-detector';
 import {
+  checkSkillServerOnline,
   createAgentRuntime,
   readDenyWritePatterns,
   readLoopDetectionOptions,
@@ -169,6 +179,8 @@ export class ChatViewProvider
   private startingSession = false;
   private cancelRequested = false;
   private pendingSettingsOpen = false;
+  /** undefined = no remote skill server; false = configured but unreachable. */
+  private skillServerOnline: boolean | undefined;
   /**
    * The last file editor used as context. When the webview gets focus VS Code
    * can report no active text editor; keep the selection context alive until
@@ -371,6 +383,52 @@ export class ChatViewProvider
       proposals: listLocalProposalSummaries(
         this.context.globalStorageUri.fsPath
       ),
+      serverConfigured: readKnowledgeSettings().serverUrl !== '',
+    });
+  }
+
+  private async postKnowledgeLibrary(): Promise<void> {
+    const local: KnowledgeLibraryItem[] = listLocalKnowledgeSummaries(
+      this.context.globalStorageUri.fsPath
+    );
+    const settings = readKnowledgeSettings();
+    let remote: KnowledgeLibraryItem[] | undefined;
+    let remoteError: string | undefined;
+    if (settings.serverUrl !== '') {
+      const root = this.currentRoot();
+      if (root === undefined) {
+        remoteError = '请先打开一个工作区，再查看 Server 知识库。';
+      } else {
+        try {
+          const token = await this.context.secrets.get(knowledgeServerTokenKey());
+          const client = new KnowledgeServerClient(
+            settings.serverUrl,
+            token?.trim() || undefined
+          );
+          const page = await client.listDocuments(
+            collectionForWorkspace(root, settings),
+            500,
+            0
+          );
+          remote = page.documents.map((document) => ({
+            id: document.id,
+            title: document.title ?? document.path,
+            path: document.path,
+            tags: [],
+            source: document.source,
+            sensitivity: document.sensitivity,
+            updatedAt: document.updatedAt,
+          }));
+        } catch (error) {
+          remoteError = error instanceof Error ? error.message : String(error);
+        }
+      }
+    }
+    this.post({
+      type: 'knowledge.library',
+      local,
+      ...(remote !== undefined ? { remote } : {}),
+      ...(remoteError !== undefined ? { remoteError } : {}),
     });
   }
 
@@ -381,6 +439,7 @@ export class ChatViewProvider
       // Focus is best effort; the message below still opens the panel.
     }
     this.postKnowledgeProposals();
+    void this.postKnowledgeLibrary();
     this.post({ type: 'knowledge.open' });
   }
 
@@ -495,7 +554,10 @@ export class ChatViewProvider
     }
   }
 
-  async approveKnowledgeProposal(id: string): Promise<void> {
+  async approveKnowledgeProposal(
+    id: string,
+    target?: 'local' | 'remote'
+  ): Promise<void> {
     const proposal = readLocalProposal(this.context.globalStorageUri.fsPath, id);
     if (proposal === undefined) {
       this.post({ type: 'error', message: '找不到该知识提案。' });
@@ -506,10 +568,47 @@ export class ChatViewProvider
       return;
     }
     const settings = readKnowledgeSettings();
+    const destination = target ?? (settings.serverUrl === '' ? 'local' : 'remote');
+    if (destination === 'local') {
+      try {
+        const document = upsertLocalKnowledge(
+          this.context.globalStorageUri.fsPath,
+          {
+            id: proposal.id,
+            title: proposal.title,
+            path: `knowledge/${proposal.id}.md`,
+            content: proposal.content,
+            tags: proposal.tags,
+            sensitivity: proposal.sensitivity,
+            source: 'conversation',
+          }
+        );
+        markLocalProposalPublished(
+          this.context.globalStorageUri.fsPath,
+          proposal.id,
+          document.id,
+          'local'
+        );
+        this.postKnowledgeProposals();
+        void this.postKnowledgeLibrary();
+        this.post({
+          type: 'log',
+          text: `知识提案《${proposal.title}》已发布到本地知识库。`,
+        });
+      } catch (error) {
+        this.post({
+          type: 'error',
+          message: `发布本地知识提案失败：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      }
+      return;
+    }
     if (settings.serverUrl === '') {
       this.post({
         type: 'error',
-        message: '请先在设置 → 知识中配置 Server URL，再发布提案。',
+        message: '发布到 Server 需要先在设置 → 知识中配置 Server URL。',
       });
       return;
     }
@@ -544,9 +643,11 @@ export class ChatViewProvider
       markLocalProposalPublished(
         this.context.globalStorageUri.fsPath,
         proposal.id,
-        result.docId
+        result.docId,
+        'remote'
       );
       this.postKnowledgeProposals();
+      void this.postKnowledgeLibrary();
       this.post({
         type: 'log',
         text: `知识提案《${proposal.title}》已发布。`,
@@ -559,6 +660,27 @@ export class ChatViewProvider
         }`,
       });
     }
+  }
+
+  deleteKnowledgeProposal(id: string): void {
+    const proposal = readLocalProposal(this.context.globalStorageUri.fsPath, id);
+    if (proposal === undefined) {
+      this.post({ type: 'error', message: '找不到该知识提案。' });
+      return;
+    }
+    if (proposal.status !== 'rejected') {
+      this.post({
+        type: 'error',
+        message: '只有已拒绝的知识提案可以删除。',
+      });
+      return;
+    }
+    if (!deleteLocalProposal(this.context.globalStorageUri.fsPath, id)) {
+      this.post({ type: 'error', message: '删除知识提案失败。' });
+      return;
+    }
+    this.postKnowledgeProposals();
+    this.post({ type: 'log', text: `已删除知识提案《${proposal.title}》。` });
   }
 
   rejectKnowledgeProposal(id: string): void {
@@ -798,7 +920,7 @@ export class ChatViewProvider
       `[config] runtime=${runtime} profile=${taskProfile} provider=${provider} ` +
         `model=${model} approval=${approvalPolicy} effort=${reasoningEffort} ` +
         `skills=${skillServerUrl === '' ? 'off' : skillServerUrl} ` +
-        `knowledge=${knowledgeServerUrl === '' ? 'off' : knowledgeServerUrl}`
+        `knowledge=${knowledgeServerUrl === '' ? 'local' : knowledgeServerUrl}`
     );
 
     this.refreshLabels();
@@ -846,6 +968,7 @@ export class ChatViewProvider
     this.runtimeId = bundle.runtimeId;
     this.modelLabel = bundle.modelLabel;
     this.providerLabel = bundle.providerLabel;
+    this.skillServerOnline = bundle.skillServerOnline;
 
     if (
       session.controller !== undefined &&
@@ -956,6 +1079,14 @@ export class ChatViewProvider
     surface.post({ type: 'skills', skills: session.skillUsage ?? [] });
   }
 
+  private async refreshSkillServerStatus(): Promise<void> {
+    this.skillServerOnline = await checkSkillServerOnline(this.context);
+    this.post({
+      type: 'skills.catalog',
+      items: this.readSkillCatalog(),
+    });
+  }
+
   private async postSkillGroups(): Promise<void> {
     try {
       this.post({
@@ -968,6 +1099,7 @@ export class ChatViewProvider
           error instanceof Error ? error.message : String(error)
         }`
       );
+      this.post({ type: 'skills.groups', groups: [] });
     }
   }
 
@@ -977,7 +1109,7 @@ export class ChatViewProvider
       resolveLocalSkillsDir(settings.localDir)
     ).items.map((item) => item.skill);
     const remote =
-      settings.serverUrl === ''
+      settings.serverUrl === '' || this.skillServerOnline === false
         ? []
         : readRemoteSkills(
             this.context.globalStorageUri.fsPath,
@@ -1004,7 +1136,7 @@ export class ChatViewProvider
       source: 'local',
     }));
     const remote =
-      settings.serverUrl === ''
+      settings.serverUrl === '' || this.skillServerOnline === false
         ? []
         : readRemoteSkills(
             this.context.globalStorageUri.fsPath,
@@ -1067,6 +1199,7 @@ export class ChatViewProvider
             items: this.readSkillCatalog(),
           });
           void this.postSkillGroups();
+          void this.refreshSkillServerStatus();
           this.postKnowledgeProposals();
           this.postState();
           this.postContext();
@@ -1105,6 +1238,7 @@ export class ChatViewProvider
           const chatSession = this.activeSession;
           const includeFile = raw.includeFile === true;
           const includeSelection = raw.includeSelection === true;
+          const includeKnowledge = raw.includeKnowledge === true;
           this.emit(chatSession, { type: 'user.message', text });
           this.startingSession = true;
           this.cancelRequested = false;
@@ -1142,12 +1276,14 @@ export class ChatViewProvider
             includeFile,
             includeSelection
           );
-          const knowledge = await this.retrieveKnowledge(
-            chatSession,
-            text,
-            root,
-            includeFile
-          );
+          const knowledge = includeKnowledge
+            ? await this.retrieveKnowledge(
+                chatSession,
+                text,
+                root,
+                includeFile
+              )
+            : { text: undefined, info: undefined };
           const contextParts = [
             mentionContext.text,
             knowledge.text,
@@ -1236,6 +1372,7 @@ export class ChatViewProvider
             type: 'skills.catalog',
             items: this.readSkillCatalog(),
           });
+          void this.refreshSkillServerStatus();
           return;
 
         case 'skills.toggle':
@@ -1260,7 +1397,8 @@ export class ChatViewProvider
 
         case 'skills.sync':
           await vscode.commands.executeCommand('agentbox.syncSkills');
-          this.post({ type: 'skills.catalog', items: this.readSkillCatalog() });
+          this.skillServerOnline = undefined;
+          await this.refreshSkillServerStatus();
           await this.postSkillGroups();
           return;
 
@@ -1311,6 +1449,11 @@ export class ChatViewProvider
 
         case 'knowledge.refresh':
           this.postKnowledgeProposals();
+          void this.postKnowledgeLibrary();
+          return;
+
+        case 'knowledge.library.request':
+          void this.postKnowledgeLibrary();
           return;
 
         case 'knowledge.capture':
@@ -1319,7 +1462,11 @@ export class ChatViewProvider
 
         case 'knowledge.approve':
           if (typeof raw.id === 'string') {
-            await this.approveKnowledgeProposal(raw.id);
+            const target =
+              raw.target === 'local' || raw.target === 'remote'
+                ? raw.target
+                : undefined;
+            await this.approveKnowledgeProposal(raw.id, target);
           }
           return;
 
@@ -1332,6 +1479,12 @@ export class ChatViewProvider
         case 'knowledge.edit':
           if (typeof raw.id === 'string') {
             await this.editKnowledgeProposal(raw.id);
+          }
+          return;
+
+        case 'knowledge.deleteProposal':
+          if (typeof raw.id === 'string') {
+            this.deleteKnowledgeProposal(raw.id);
           }
           return;
 
@@ -1493,28 +1646,34 @@ export class ChatViewProvider
     includeFile: boolean
   ): Promise<{ text?: string; info?: KnowledgeTurnInfo }> {
     const settings = readKnowledgeSettings();
-    if (settings.serverUrl === '' || !settings.autoRetrieve) return {};
+    if (!settings.autoRetrieve) return {};
 
     try {
-      const token = await this.context.secrets.get(knowledgeServerTokenKey());
-      const client = new KnowledgeServerClient(
-        settings.serverUrl,
-        token?.trim() || undefined
-      );
       let query = prompt;
       if (includeFile) {
-        const editor = vscode.window.activeTextEditor;
-        if (editor !== undefined && editor.document.uri.scheme === 'file') {
+        const editor = this.contextEditor();
+        if (editor !== undefined) {
           const rel = toWorkspacePath(root, editor.document.uri.fsPath);
           if (rel !== undefined) query = `${query} ${rel}`;
         }
       }
-      const response = await client.search({
-        collection: collectionForWorkspace(root, settings),
-        query: query.slice(0, 1_000),
-        topK: settings.topK,
-        maxChars: settings.maxChars,
-      });
+      const response =
+        settings.serverUrl === ''
+          ? searchLocalKnowledge(this.context.globalStorageUri.fsPath, {
+              query: query.slice(0, 1_000),
+              topK: settings.topK,
+              maxChars: settings.maxChars,
+            })
+          : await new KnowledgeServerClient(
+              settings.serverUrl,
+              (await this.context.secrets.get(knowledgeServerTokenKey()))?.trim() ||
+                undefined
+            ).search({
+              collection: collectionForWorkspace(root, settings),
+              query: query.slice(0, 1_000),
+              topK: settings.topK,
+              maxChars: settings.maxChars,
+            });
       const formatted = formatKnowledge(response.results, settings.maxChars);
       if (formatted.text === '' || formatted.citations.length === 0) return {};
       return {
@@ -2002,6 +2161,13 @@ export class ChatViewProvider
     <section class="composer">
       <div id="skill-bar" class="skill-bar" hidden aria-label="已注入的 Skill"></div>
       <div id="context-bar" class="context-bar" hidden>
+        <button id="toggle-knowledge" class="context-toggle" type="button" aria-pressed="false" title="本轮加入知识库检索（会增加上下文 token）">
+          <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 5.2C10.1 4 7.8 3.7 5 4v14c2.8-.3 5.1 0 7 1.2 1.9-1.2 4.2-1.5 7-1.2V4c-2.8-.3-5.1 0-7 1.2Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M12 5.2v14" fill="none" stroke="currentColor" stroke-width="1.6"/>
+          </svg>
+          <span id="knowledge-label">知识</span>
+        </button>
         <button id="toggle-file" class="context-toggle" type="button" aria-pressed="false" title="加入当前文件">
           <svg class="context-icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M7 3h6l4 4v14H7V3Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
@@ -2156,7 +2322,7 @@ export class ChatViewProvider
         <div class="settings-page" data-settings-page="knowledge" hidden>
           <label class="field">
             <span>Server URL</span>
-            <input id="setting-knowledge-server-url" type="text" autocomplete="off" placeholder="http://127.0.0.1:4771" />
+            <input id="setting-knowledge-server-url" type="text" autocomplete="off" placeholder="留空 = 本地知识；或 http://127.0.0.1:4771" />
           </label>
           <label class="field">
             <span>Server Token</span>
@@ -2232,8 +2398,13 @@ export class ChatViewProvider
     <div id="knowledge-scrim" class="knowledge-scrim" hidden></div>
     <aside id="knowledge-panel" class="knowledge-panel" role="dialog" aria-modal="true" aria-label="知识提案" hidden>
       <div class="knowledge-header">
-        <span>知识提案</span>
-        <button id="knowledge-close" class="icon-button" title="关闭知识提案" aria-label="关闭知识提案">✕</button>
+        <span>知识</span>
+        <button id="knowledge-close" class="icon-button" title="关闭知识面板" aria-label="关闭知识面板">✕</button>
+      </div>
+      <div class="knowledge-tabs" role="tablist" aria-label="知识分类">
+        <button class="knowledge-tab active" type="button" data-knowledge-tab="proposals">提案</button>
+        <button class="knowledge-tab" type="button" data-knowledge-tab="local">本地知识</button>
+        <button class="knowledge-tab" type="button" data-knowledge-tab="server">Server 知识</button>
       </div>
       <div id="knowledge-list" class="knowledge-list"></div>
       <div class="knowledge-actions">

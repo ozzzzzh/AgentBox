@@ -1937,6 +1937,33 @@ button:disabled {
   font-weight: 600;
 }
 
+.knowledge-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.knowledge-tab {
+  flex: 1;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  padding: 6px 4px;
+  font-size: 0.8em;
+}
+
+.knowledge-tab:hover {
+  color: var(--vscode-foreground);
+}
+
+.knowledge-tab.active {
+  color: var(--vscode-foreground);
+  border-bottom-color: var(--vscode-focusBorder);
+}
+
 .knowledge-list {
   display: flex;
   flex: 1;
