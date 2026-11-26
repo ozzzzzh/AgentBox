@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "etl-authoring",
   "name": "ETL 编写",
-  "version": "1.1.0",
-  "description": "可执行的 ETL/数仓 SQL 规范：staging 落表、分层与星型/雪花选型、CTE 命名与层级、注释模板、幂等增量与验证 SQL。",
+  "version": "1.2.0",
+  "description": "可执行的 ETL/数仓 SQL 规范：staging 落表、分层与星型/雪花选型、CTE 命名与层级、注释模板、补数管理、CASE WHEN 治理、幂等增量与验证 SQL。",
   "owner": "general",
   "activation": "on-demand",
   "appliesTo": {
