@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "error-handling",
+  "name": "错误处理与可观测性",
+  "version": "1.0.0",
+  "description": "错误传播、日志、重试与超时、资源清理的通用规范，避免吞错和不可诊断的失败。",
+  "owner": "general",
+  "activation": "on-demand",
+  "appliesTo": {
+    "languages": ["typescript", "javascript", "python", "java", "go", "rust", "csharp"]
+  },
+  "triggers": {
+    "keywords": ["error", "exception", "logging", "retry", "timeout", "错误", "异常", "日志", "重试", "超时"]
+  },
+  "priority": 65,
+  "budget": { "maxChars": 6000 },
+  "required": false
+}

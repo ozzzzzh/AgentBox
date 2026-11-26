@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "db-migration-safety",
+  "name": "数据库迁移安全",
+  "version": "1.0.0",
+  "description": "评审 schema 迁移的向后兼容、在线变更、锁与回滚，避免上线期间锁表或数据丢失。",
+  "owner": "general",
+  "activation": "on-demand",
+  "appliesTo": {
+    "languages": ["sql"]
+  },
+  "triggers": {
+    "keywords": ["migration", "schema", "alter table", "backfill", "rollback", "迁移", "回滚", "锁表"]
+  },
+  "priority": 75,
+  "budget": { "maxChars": 6500 },
+  "required": false
+}

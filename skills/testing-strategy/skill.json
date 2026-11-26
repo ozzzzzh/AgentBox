@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "testing-strategy",
+  "name": "测试策略",
+  "version": "1.0.0",
+  "description": "选择测试层级、写确定性测试、用最小验证支撑结论的通用方法。",
+  "owner": "general",
+  "activation": "on-demand",
+  "appliesTo": {
+    "languages": ["typescript", "javascript", "python", "java", "go", "rust", "csharp"]
+  },
+  "triggers": {
+    "keywords": ["test", "testing", "unit test", "integration", "coverage", "测试", "单测", "覆盖率"]
+  },
+  "priority": 65,
+  "budget": { "maxChars": 6000 },
+  "required": false
+}
