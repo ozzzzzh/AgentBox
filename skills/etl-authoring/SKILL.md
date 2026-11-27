@@ -70,8 +70,7 @@ ANALYZE ads.ads_xxx;
 
 ## 四、做报表模型时再看（可选）
 
-- 默认星型：事实表 + 维度表，join 少、报表好读；只有当同一层级被多个模型共享且需要独立维护时，才拆雪花。
-- 维度用代理键（数仓生成的编号），事实表存编号；需要看属性历史时加 `valid_from / valid_to / is_current`。
+- 默认星型：事实表 + 维度表；只有同一层级被多个模型共享且需独立维护才拆雪花。维度用代理键，历史属性加 `valid_from / valid_to / is_current`。
 
 ## 五、CTE 命名：前缀 + 业务域
 
@@ -87,6 +86,8 @@ ANALYZE ads.ads_xxx;
 - 命名 = `前缀_业务域_指标_维度`，如 `b_struc_person_cnt_by_month_plate`。
 - 缩写统一：`cnt` 数量、`amt` 金额或汇总值、`mgmt` 管理人员、`cur` 本期、`last_year` 上年同期。
 - 一个 CTE 只做一件事；名字里出现 `and` 就考虑拆开。
+- **设计时先画链路**：主干 3–5 层（p → b → f/j → a → 输出），单个 CTE 内不再套多层子查询；超过就拆中间表。简单脚本 `p_ → b_ → a_` 就够。
+- `f_/j_` 按实际数据流排，不必都用；`o_` 仅多目标输出时用。
 - 阅读顺序应能按 `p_ → b_ → f_/j_ → a_ → 最终输出` 走通。
 
 ```text
@@ -98,24 +99,30 @@ p_date_params
                  └─ 最终 SELECT / UNION ALL
 ```
 
-## 六、每个 CTE 结束写一句注释
+## 六、每个 CTE 开头写一句注释，CTE 之间留空行
 
 ```sql
-WITH p_date_params AS (
+WITH
+-- p_ 统一日期与台账月份口径
+p_date_params AS (
     ...
-), -- p_ 统一日期与台账月份口径
+),
+
+-- b_ 按月份 + 板块汇总员工数量
 b_xxx AS (
     ...
-), -- b_ 按月份 + 板块汇总员工数量
+),
+
+-- a_ 员工数量口径：当期与上年同期对比
 a_xxx AS (
     ...
-) -- a_ 员工数量口径：当期与上年同期对比
+)
 SELECT ...
 ```
 
-- 只写一行，放在 `),` 或 `)` 同一行。
-- 写"这步产出什么 + 口径/时间对齐方式"，不要写"这里做 join"。
-- 扫一遍注释就能看懂整条链路。
+- 注释放 CTE 开头，先看注释再看 SQL；不要写在 `),` 后面。
+- CTE 之间空一行，长脚本也不会挤在一起。
+- 一句话写清"这步产出什么 + 口径/时间对齐方式"。
 
 ## 七、参数与日期全部放在 p_
 
@@ -148,7 +155,7 @@ END AS overseas_ledger_month_yyyymm
 ```
 
 - **0 和 NULL 要定规矩**：没有上年数据时 `diff` 记 0 还是 NULL，和业务确认，整张表保持一致。
-- **跨源去重**：人员、客户可能重复，先按主键去重再计数；用 `count(distinct 主键)`，不要直接 `count(*)`。
+- **跨源去重**：人员、客户可能重复，先按主键去重；用 `count(distinct 主键)`，不要 `count(*)`。
 - `CASE` 只回答一个问题，放在命名 CTE 里，例如 `b_status_normalized`。
 - 必须写 `ELSE`；未知值落 `'unknown'` 或 `'其他'`，并单独查一次确认没有漏映射。
 - 范围条件用左闭右开 `>= from AND < to`；分支互斥，顺序写清。
@@ -241,9 +248,9 @@ WHERE updated_at >= :last_watermark - interval '2' day;
 - 只列本脚本直接依赖的表，上游的上游不列。
 - 字段只列实际引用到的（`SELECT / WHERE / JOIN / GROUP BY / ORDER BY`）。
 - 不知道含义就留空 `""`，不要猜；等业务确认后补。
-- 用途：迁移、血缘、回归测试、交接。
+- 用途：迁移、血缘、交接。
 
-提取方法：先搜 `FROM / JOIN` 后的 `schema.table` 记为输入、`INSERT INTO` 后的表记为输出；再对直接读源表的 `b_` CTE 收集 `别名.字段` 和引号字段；排除 `p_/b_/f_/j_/a_` 这些 CTE 名；按表分组、按出现顺序列出。
+提取：搜 `FROM/JOIN` 后的 `schema.table` 记为输入，`INSERT INTO` 后的表记为输出；对直接读源表的 `b_` CTE 收集 `别名.字段` 和引号字段；排除 `p_/b_/f_/j_/a_`；按表分组列出。
 
 ## 十二、完整小例子
 
@@ -251,9 +258,13 @@ WHERE updated_at >= :last_watermark - interval '2' day;
 TRUNCATE TABLE ads.ads_employee_cnt_by_plate;
 
 INSERT INTO ads.ads_employee_cnt_by_plate (category, plate, total, diff)
-WITH p_date_params AS (
+WITH
+-- p_ 统计月
+p_date_params AS (
     SELECT to_char(current_date - interval '1 day', 'yyyymm') AS as_of_month_yyyymm
-), -- p_ 统计月
+),
+
+-- b_ 按月份 + 板块汇总人数
 b_person_by_plate AS (
     SELECT biz_month,
            plate,
@@ -261,7 +272,9 @@ b_person_by_plate AS (
     FROM ads.ads_person_struc_table
     WHERE plate <> '全集团'
     GROUP BY 1, 2
-), -- b_ 按月份 + 板块汇总人数
+),
+
+-- a_ 员工数量：当期与上年同期对比
 a_employee_cnt_by_plate AS (
     SELECT '员工数量' AS category,
            cur.plate,
@@ -272,7 +285,7 @@ a_employee_cnt_by_plate AS (
            ON ly.plate = cur.plate
           AND ly.biz_month = to_char((cur.biz_month || '01')::date - interval '1 year', 'yyyymm')
     WHERE cur.biz_month = (SELECT as_of_month_yyyymm FROM p_date_params)
-) -- a_ 员工数量：当期与上年同期对比
+)
 SELECT category, plate, total, diff
 FROM a_employee_cnt_by_plate;
 
@@ -285,24 +298,21 @@ ANALYZE ads.ads_employee_cnt_by_plate;
 
 要点：
 
-- `b_person_by_plate` 被引用两次（当期/上年期）：小表可以，大表先落临时表，避免重复扫描。
-- 上年期用 `- interval '1 year'`；`coalesce(...,0)` 是业务选择，没有上年数据时 `diff` 记 0，要 NULL 就统一改。
+- 小表可以引用两次；大表先落临时表，避免重复扫描。上年期用 `- interval '1 year'`；`coalesce(...,0)` 是业务选择，要 NULL 就统一改。
 
 ## 十三、提交前检查
 
-- [ ] 粒度写清楚了吗？
+- [ ] 粒度清了吗？
 - [ ] 表类型和更新方式选对了吗？关键表 `TRUNCATE` 有失败预案吗？（§三）
 - [ ] 命名按 `p_/b_/f_/j_/a_`，同域一致吗？
 - [ ] 日期/月份口径都在 `p_` 吗？有没有重复手写？
 - [ ] 指标卡写了吗？0 和 NULL 的规则定了吗？
 - [ ] `CASE` 都有 `ELSE`，未知值有去处吗？未映射检查带日期条件了吗？
 - [ ] 输出列顺序/类型一致，`UNION ALL` 没做额外计算吗？
-- [ ] 下游要的维度都补零了吗？粒度检查跑过了吗？
-- [ ] 末尾有数据源清单和 ODS 字段释义吗？
+- [ ] 下游维度补零了吗？粒度检查跑过了吗？
+- [ ] 末尾有数据源清单和 ODS 释义吗？
 
 ## 反模式
 
 - `step1/step2` 命名；`SELECT *` 落表；一个 `a_` 混多个指标。
-- 关键表裸 `TRUNCATE`，失败后没有重跑或恢复方案。
-- 日期口径散落各处；同一 `CASE` 抄多遍。
-- ODS 字段不写释义，交接靠猜。
+- 关键表裸 `TRUNCATE` 且无恢复方案；日期口径散落各处；同一 `CASE` 抄多遍；ODS 字段不写释义。

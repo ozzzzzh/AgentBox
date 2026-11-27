@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "etl-authoring",
   "name": "ETL SQL 编写",
-  "version": "2.1.0",
-  "description": "脚本型 ETL SQL 规范：脚本骨架、表更新方式、p_/b_/f_/j_/a_ CTE 命名、逗号注释、指标卡、CASE WHEN、源表落表、数据源清单与提交检查。",
+  "version": "2.2.0",
+  "description": "脚本型 ETL SQL 规范：脚本骨架、表更新方式、p_/b_/f_/j_/a_ CTE 命名、开头注释与空行、指标卡、CASE WHEN、源表落表、数据源清单与提交检查。",
   "owner": "general",
   "activation": "on-demand",
   "appliesTo": {
