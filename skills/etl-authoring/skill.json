@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
   "id": "etl-authoring",
-  "name": "ETL 编写",
-  "version": "1.2.0",
-  "description": "可执行的 ETL/数仓 SQL 规范：staging 落表、分层与星型/雪花选型、CTE 命名与层级、注释模板、补数管理、CASE WHEN 治理、幂等增量与验证 SQL。",
+  "name": "ETL SQL 编写",
+  "version": "2.1.0",
+  "description": "脚本型 ETL SQL 规范：脚本骨架、表更新方式、p_/b_/f_/j_/a_ CTE 命名、逗号注释、指标卡、CASE WHEN、源表落表、数据源清单与提交检查。",
   "owner": "general",
   "activation": "on-demand",
   "appliesTo": {
-    "languages": ["sql", "python"]
+    "languages": ["sql"]
   },
   "triggers": {
-    "keywords": ["etl", "elt", "dbt", "data warehouse", "star schema", "snowflake schema", "cte", "staging", "数仓", "建模", "分层", "增量", "数据开发"]
+    "keywords": ["etl", "sql", "cte", "case when", "指标卡", "口径", "落表", "数据源清单", "ods", "truncate", "数据开发"]
   },
   "priority": 75,
   "budget": { "maxChars": 8000 },

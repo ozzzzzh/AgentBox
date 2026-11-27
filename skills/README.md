@@ -51,7 +51,8 @@ Copy-Item -Recurse .\skills\code-review "$env:USERPROFILE\.agentbox\skills\local
 | `code-review` | 代码评审 | 工程规范 | on-demand | PR/变更评审的检查顺序与 finding 写法 |
 | `error-handling` | 错误处理与可观测性 | 工程规范 | on-demand | 错误传播、日志、重试/超时、资源清理 |
 | `testing-strategy` | 测试策略 | 工程规范 | on-demand | 选测试层级、最小验证、确定性测试 |
-| `etl-authoring` | ETL 编写 | 数据/SQL | on-demand | staging 落表、分层与星型/雪花选型、CTE 命名与层级、注释模板、补数管理、CASE WHEN 治理、验证 SQL |
+| `etl-authoring` | ETL SQL 编写 | 数据/SQL | on-demand | 脚本骨架、表更新方式、p_/b_/f_/j_/a_ CTE 命名、指标卡、CASE WHEN、数据源清单与提交检查 |
+| `etl-backfill` | ETL 补数 | 数据/SQL | on-demand | 补数分类、圈范围、按分区重跑、备份回滚、并发互斥、记录与逐分区验收 |
 | `sql-query-review` | SQL 查询与索引评审 | 数据/SQL | on-demand | 执行计划、索引、N+1、事务与锁 |
 | `db-migration-safety` | 数据库迁移安全 | 数据/SQL | on-demand | 兼容迁移、在线变更、回滚与回填 |
 | `api-design-review` | API 契约设计评审 | 后端 | on-demand | 契约、幂等、版本兼容、授权边界 |

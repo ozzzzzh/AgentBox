@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "etl-backfill",
+  "name": "ETL 补数",
+  "version": "1.0.0",
+  "description": "补数（历史分区重跑）操作规范：判断类型、圈定范围、按分区可重跑执行、备份回滚、并发互斥、记录与逐分区验收。",
+  "owner": "general",
+  "activation": "on-demand",
+  "appliesTo": {
+    "languages": ["sql"]
+  },
+  "triggers": {
+    "keywords": ["补数", "backfill", "重跑", "回补", "历史数据", "重述", "分区", "跑批"]
+  },
+  "priority": 72,
+  "budget": { "maxChars": 6000 },
+  "required": false
+}
