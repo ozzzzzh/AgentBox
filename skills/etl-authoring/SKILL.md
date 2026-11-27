@@ -11,6 +11,7 @@
 - 改口径/加 `CASE`：§七 参数 → §八 口径。
 - 选落表方式：§三。
 - 补历史数据：看配套 skill `etl-backfill`。
+- 分层/复用：看配套 skill `etl-layering`。
 - 交付前：§十三 检查。
 
 ## 一、先定粒度和输出
@@ -68,9 +69,9 @@ ANALYZE ads.ads_xxx;
 - **ADS 报表默认全量重算**；只有事实表、明细大表才按分区。
 - 方言按引擎改：Hive 用 `INSERT OVERWRITE ... PARTITION`、`ANALYZE TABLE`；Greenplum/PostgreSQL 用 `DELETE`、`ANALYZE`。
 
-## 四、做报表模型时再看（可选）
+## 四、分层与模型：看 etl-layering
 
-- 默认星型：事实表 + 维度表；只有同一层级被多个模型共享且需独立维护才拆雪花。维度用代理键，历史属性加 `valid_from / valid_to / is_current`。
+CTE 怎么分层、`f_/j_` 何时独立、何时落 DWD/DWS、星型/雪花怎么选，见配套 skill `etl-layering`。这里只保留命名。
 
 ## 五、CTE 命名：前缀 + 业务域
 
@@ -86,18 +87,8 @@ ANALYZE ads.ads_xxx;
 - 命名 = `前缀_业务域_指标_维度`，如 `b_struc_person_cnt_by_month_plate`。
 - 缩写统一：`cnt` 数量、`amt` 金额或汇总值、`mgmt` 管理人员、`cur` 本期、`last_year` 上年同期。
 - 一个 CTE 只做一件事；名字里出现 `and` 就考虑拆开。
-- **设计时先画链路**：主干 3–5 层（p → b → f/j → a → 输出），单个 CTE 内不再套多层子查询；超过就拆中间表。简单脚本 `p_ → b_ → a_` 就够。
-- `f_/j_` 按实际数据流排，不必都用；`o_` 仅多目标输出时用。
 - 阅读顺序应能按 `p_ → b_ → f_/j_ → a_ → 最终输出` 走通。
-
-```text
-p_date_params
-  └─ b_xxx（直接读源表）
-       ├─ f_xxx_cur（筛当期）
-       └─ f_xxx_last_year（筛上年同期）
-            └─ a_xxx（算 total / diff）
-                 └─ 最终 SELECT / UNION ALL
-```
+- 分层、嵌套、`f_/j_/o_` 的使用规则，见 `etl-layering`。
 
 ## 六、每个 CTE 开头写一句注释，CTE 之间留空行
 

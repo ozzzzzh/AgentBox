@@ -52,6 +52,7 @@ Copy-Item -Recurse .\skills\code-review "$env:USERPROFILE\.agentbox\skills\local
 | `error-handling` | 错误处理与可观测性 | 工程规范 | on-demand | 错误传播、日志、重试/超时、资源清理 |
 | `testing-strategy` | 测试策略 | 工程规范 | on-demand | 选测试层级、最小验证、确定性测试 |
 | `etl-authoring` | ETL SQL 编写 | 数据/SQL | on-demand | 脚本骨架、表更新方式、p_/b_/f_/j_/a_ CTE 命名、指标卡、CASE WHEN、数据源清单与提交检查 |
+| `etl-layering` | ETL 分层与复用 | 数据/SQL | on-demand | p_/b_/f_/j_/a_ 各层职责、何时独立、何时落 DWD/DWS、星型/雪花、纯文本分层图、性能与评审清单 |
 | `etl-backfill` | ETL 补数 | 数据/SQL | on-demand | 补数分类、圈范围、按分区重跑、备份回滚、并发互斥、记录与逐分区验收 |
 | `sql-query-review` | SQL 查询与索引评审 | 数据/SQL | on-demand | 执行计划、索引、N+1、事务与锁 |
 | `db-migration-safety` | 数据库迁移安全 | 数据/SQL | on-demand | 兼容迁移、在线变更、回滚与回填 |

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "etl-layering",
+  "name": "ETL 分层与复用",
+  "version": "1.0.0",
+  "description": "ETL 分层设计：p_/b_/f_/j_/a_ 各层职责、何时独立成层、何时落 DWD/DWS 物理表、星型/雪花选择、性能与评审清单。",
+  "owner": "general",
+  "activation": "on-demand",
+  "appliesTo": {
+    "languages": ["sql"]
+  },
+  "triggers": {
+    "keywords": ["分层", "layering", "dwd", "dws", "ads", "cte 分层", "复用", "物理表", "血缘", "星型", "雪花", "etl 设计"]
+  },
+  "priority": 74,
+  "budget": { "maxChars": 6000 },
+  "required": false
+}
