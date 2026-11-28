@@ -20,6 +20,10 @@ whenToUse: 用户给了表样（Excel/截图/字段清单）与数据集（SQL �
 **推荐配方路径**：自然语言不可审计，配方是**人可读、可进版本库、可复核**的中间产物。
 你只负责把需求翻译成配方字段，编译是确定性的；用户改一行配方就能改口径，不用重画 Excel。
 
+用户给的提示词信息不全时，先按 `../fr-cpt/references/prompt-template.md` 第六节的三问补齐：
+连接名、标志列/日期列的实测类型、版式意图（指标横铺还是竖排、要不要合计/环比）。
+其余样式项不用问——6.2 已经定死。
+
 ## 路径 A：配方（源表 + 自然语言）
 
 ### 第 1 步：从源表建数据集
@@ -41,6 +45,13 @@ whenToUse: 用户给了表样（Excel/截图/字段清单）与数据集（SQL �
 - `columns` 两个用途：校验 `fields` 是否存在、决定"维度 vs 度量"（`integer/double/decimal` 算数值）。
   SQL 数据集**必须写**（CPT 里不存 SQL 数据集的列类型，不写就只能靠 `sum(...) AS 别名` 猜，
   猜错会让数字列按文本居中显示）。
+- **`column_types` 记源表物理列类型**（`pg_typeof` 探针结果），别省：类型决定方言检查是否误报，
+  也决定布尔列能不能写 `= 1`。示例：
+
+  ```jsonc
+  "column_types": { "biz_month": "character varying", "system_value": "numeric", "is_sum": "boolean" }
+  ```
+  已知的几张表的类型见 `../fr-cpt/references/sql-dialects.md` 第六节。
 - SQL 里出现 `${x}`，就必须在 `parameters` 里声明 `x`，否则运行期取不到值（校验器会挡）。
 - 能离线就选 `embedded`：数据随模板走，跨机器可跑。
 

@@ -127,12 +127,40 @@ def _rules_target_pg() -> Rules:
             "suggestion": "字符串参数写成 `'${name}'`，日期写成 `'${name}'::date`，多值写成 `in (${ids})`",
         },
         {
-            "code": "PG-PARAM-DATE",
-            "level": "info",
+            "code": "PG-AGG-CAST-ORDER",
+            "level": "error",
             "pattern": re.compile(
-                r"\b(\w*(?:date|month|day|time|dt|bizdate)\w*)\s*(=|>=|<=|>|<)\s*'\$\{", re.I),
+                r"\b(SUM|AVG|MAX|MIN|COUNT)\s*\([^()]*\)\s*::\s*(numeric|decimal|int|integer|bigint|float|double|real)",
+                re.I),
+            "message": "先聚合后转型：源列若是 varchar/text，SUM 自己就会报 "
+                       "`function sum(character varying) does not exist`，外面加 ::numeric 救不了",
+            "suggestion": "把转型挪进去：SUM(x::numeric)；对本来就是 numeric 的列也无害",
+        },
+        {
+            "code": "PG-BOOL-COMPARE",
+            "level": "warning",
+            "pattern": re.compile(r"\b(is_|has_|flag|是否)[A-Za-z_]*\s*=\s*[01]\b", re.I),
+            "message": "标志列与 0/1 比较：PG 里 boolean = integer 会报 "
+                       "`operator does not exist: boolean = integer`",
+            "suggestion": "布尔列直接写 `is_sum` 或 `is_sum IS TRUE`；混用类型时写 `is_sum::int = 1`",
+        },
+        {
+            "code": "PG-DATE-TEXT-MIX",
+            "level": "warning",
+            "pattern": re.compile(
+                r"\b\w*(month|date|day|time|dt)\w*\s*=\s*(to_char|to_date)\s*\(", re.I),
+            "message": "拿文本函数的结果去等值比较日期/月份列，成败取决于列类型："
+                       "列是 date 时会报 `invalid input syntax for type date`",
+            "suggestion": "类型无关写法 `col::text LIKE '2025-05%'`；"
+                          "已知是 date 就用范围 `col >= to_date('2025-05','YYYY-MM') "
+                          "AND col < … + interval '1 month'`（还能走索引）",
+        },
+        {
+            "code": "PG-PARAM-TEXT-CMP",
+            "level": "info",
+            "pattern": re.compile(r"\b\w*(month|date|day|time|dt)\w*\s*=\s*'\$\{", re.I),
             "message": "日期/月份列直接和 '${...}' 比较，依赖 PG 的隐式转换",
-            "suggestion": "显式转：`col = '${biz_month}'::date` 或 `to_date('${biz_month}','YYYY-MM')`",
+            "suggestion": "列是 text 就保持；列是 date 改成 to_date('${x}','YYYY-MM') 或范围比较",
         },
         {
             "code": "PG-SELECT-STAR",
@@ -194,10 +222,30 @@ def adapt(sql: str, dialect: str = "greenplum") -> str:
 
 
 # ---------------------------------------------------------------- 检查
-def lint(sql: str, dialect: str = "greenplum") -> List[Dict[str, str]]:
+TEXT_TYPES = ("char", "varchar", "character varying", "text", "string", "bpchar", "nvarchar")
+
+# 只跟"列是不是日期/文本"有关的规则：调用方声明了列类型就不该再猜
+_TYPE_SENSITIVE = {"PG-DATE-TEXT-MIX", "PG-PARAM-TEXT-CMP"}
+
+
+def _column_of(snippet: str) -> str:
+    m = re.match(r"\s*([A-Za-z_][\w.]*)\s*(?:=|>=|<=|>|<|LIKE)", snippet, re.I)
+    return (m.group(1).split(".")[-1] if m else "").strip().strip('"')
+
+
+def _declared_text(snippet: str, known_types) -> bool:
+    if not known_types:
+        return False
+    col = _column_of(snippet)
+    t = (known_types.get(col) or "").lower()
+    return any(k in t for k in TEXT_TYPES)
+
+
+def lint(sql: str, dialect: str = "greenplum", known_types=None) -> List[Dict[str, str]]:
     """返回问题列表：[{level, code, message, suggestion, snippet}]。
 
-    只有目标方言是 PG/GP 时才按 PG 规则检查；其它方言原样放行（并提示未做适配）。
+    ``known_types``：{列名: 类型}，来自配方的 source.columns。给了就能把
+    "拿文本函数比日期列"这类**依赖列类型**的规则判准（列本来就是 varchar 就不报）。
     """
     sql = sql or ""
     if not is_pg_family(dialect):
@@ -211,6 +259,8 @@ def lint(sql: str, dialect: str = "greenplum") -> List[Dict[str, str]]:
     for r in _rules_target_pg():
         for m in r["pattern"].finditer(sql):
             snippet = sql[max(0, m.start() - 12):m.end() + 12].replace("\n", " ")
+            if r["code"] in _TYPE_SENSITIVE and _declared_text(m.group(0), known_types):
+                break  # 列已声明为文本，这条规则不适用
             out.append({
                 "level": r["level"], "code": r["code"], "message": r["message"],
                 "suggestion": r["suggestion"], "snippet": snippet.strip(),
@@ -219,8 +269,8 @@ def lint(sql: str, dialect: str = "greenplum") -> List[Dict[str, str]]:
     return out
 
 
-def lint_summary(sql: str, dialect: str = "greenplum") -> str:
-    issues = lint(sql, dialect)
+def lint_summary(sql: str, dialect: str = "greenplum", known_types=None) -> str:
+    issues = lint(sql, dialect, known_types)
     if not issues:
         return "SQL 方言检查通过（PostgreSQL / Greenplum 兼容）。"
     lines = [f"SQL 方言检查：{len(issues)} 项"]

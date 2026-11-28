@@ -256,15 +256,54 @@ def _cmp(expected: frcpt.Style, actual: frcpt.Style) -> List[str]:
 _SQL_AGG_RE = re.compile(
     r"\b(sum|count|avg|max|min)\s*\(([^)]*)\)\s*(?:as\s+)?([A-Za-z_\u4e00-\u9fa5][\w\u4e00-\u9fa5]*)?",
     re.I)
+_SQL_CAST_RE = re.compile(r"::\s*(numeric|decimal|int|integer|bigint|smallint|float|double)", re.I)
+_SQL_ALIAS_RE = re.compile(r'\bAS\s+("([^"]+)"|([A-Za-z_\u4e00-\u9fa5][\w\u4e00-\u9fa5]*))', re.I)
+_SQL_ARITH_RE = re.compile(r"[+\-*/]|\b(abs|round|coalesce|greatest|least)\s*\(", re.I)
+
+
+def _aliased_expressions(query: str):
+    """(表达式, 别名) 列表 —— 粗粒度但够用：取 AS 之前、上一个逗号/SELECT 之后那段。"""
+    out = []
+    for m in _SQL_ALIAS_RE.finditer(query or ""):
+        alias = m.group(2) or m.group(3)
+        head = query[:m.start()]
+        cut = max(head.rfind(","), head.upper().rfind("SELECT"))
+        expr = head[cut + 1:].strip()
+        out.append((expr, alias))
+    return out
 
 
 def sql_numeric_columns(query: str) -> set:
-    """从 SQL 里猜数值列：聚合函数的别名（或聚合的内层列）视为数值。
+    """从 SQL 里猜数值列。
 
-    只是为了血缘图/SQL 还原更贴近语义，不参与生成决策，解析失败就返回空集。
+    CPT 不保存 SQL 数据集的列类型，事后校验只能靠 SQL 推测。三层：
+      1. 直接聚合/转型：``SUM(x)::numeric AS v``、``count(*) AS n``
+      2. 透传：``c.cur_value AS "本期"`` —— 表达式里引用了已知数值列，别名也是数值
+      3. 算术：``a - b``、``round(x,2)`` 之类
+    推测只影响 6.2 的"数字右对齐 / 文字居中"判定，不参与取数，猜错最坏是样式偏一点。
     """
     out = set()
     try:
+        pairs = _aliased_expressions(query or "")
+        for expr, alias in pairs:
+            if not alias:
+                continue
+            if re.search(r"\b(sum|count|avg|max|min)\s*\(", expr, re.I) or _SQL_CAST_RE.search(expr):
+                out.add(alias)
+        # 传递闭包：表达式中出现已知数值列 → 别名也是数值
+        changed = True
+        rounds = 0
+        while changed and rounds < 6:
+            changed = False
+            rounds += 1
+            for expr, alias in pairs:
+                if not alias or alias in out:
+                    continue
+                tokens = set(re.findall(r"[A-Za-z_\u4e00-\u9fa5][\w\u4e00-\u9fa5]*", expr))
+                if tokens & out or _SQL_ARITH_RE.search(expr):
+                    out.add(alias)
+                    changed = True
+        # 兼容旧写法：聚合函数直接跟别名（无 AS）
         for m in _SQL_AGG_RE.finditer(query or ""):
             alias = (m.group(3) or "").strip()
             inner = (m.group(2) or "").split(",")[-1].strip()
@@ -274,7 +313,7 @@ def sql_numeric_columns(query: str) -> set:
             elif inner:
                 out.add(inner)
     except Exception:
-        return set()
+        return out
     return out
 
 

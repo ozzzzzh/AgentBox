@@ -516,9 +516,14 @@ def main(argv=None):
     wb = build(cfg, cfg_dir)
 
     sql_issues = []
+    known_types = {}
+    for spec in cfg.get("datasets", []):
+        for c in (spec.get("columns") or []):
+            if c.get("name"):
+                known_types[c["name"]] = c.get("type", "string")
     for ds in wb.datasets:
         if isinstance(ds, frcpt.SqlDataset):
-            sql_issues.extend(dialect.lint(ds.query, d))
+            sql_issues.extend(dialect.lint(ds.query, d, known_types))
     if any(isinstance(ds, frcpt.SqlDataset) for ds in wb.datasets):
         print(f"--- SQL 方言检查（目标 {d}）---")
         if sql_issues:

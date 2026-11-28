@@ -4,9 +4,7 @@
 （`[销量]A`、`TOP n`、`ISNULL`），直接搬过来会报错——这份文档把这些坑固定下来，
 `scripts/dialect.py` 是它的可执行版本。
 
-## 一、帆软侧的两个前提
-
-1. **数据集 SQL 是原样下发给 JDBC 的**，帆软不做方言翻译。写 PG 不认识的语法，预览就报错，
+## 一、帆软侧的两个前提1. **数据集 SQL 是原样下发给 JDBC 的**，帆软不做方言翻译。写 PG 不认识的语法，预览就报错，
    且错误信息在网页端很模糊（常常只显示"数据集执行失败"）。
 2. **`${name}` 是文本替换，不是绑定参数**。所以：
    - 字符串要自己加单引号：`'${name}'`
@@ -17,9 +15,7 @@
 
 `<PageQuery>` 一般留空；真要分页，PG/GP 用 `LIMIT n OFFSET m`。
 
-## 二、方言对照：常见写法 → PG/GP
-
-| 你会看到的写法 | 来源 | PG/GP 正确写法 |
+## 二、方言对照：常见写法 → PG/GP| 你会看到的写法 | 来源 | PG/GP 正确写法 |
 |---|---|---|
 | `[表名]` / `[列名]` | SQL Server | `"表名"` / `"列名"`（双引号，大小写敏感） |
 | `` `表名` `` | MySQL / Hive | `"表名"` 或裸写（会被折叠成小写） |
@@ -100,7 +96,34 @@ python scripts/cpt_analyze.py 结果.cpt --dialect greenplum   # 事后检查已
 | `PG-SELECT-STAR` | info | `SELECT *` 会把上游新增列带进报表 |
 | `PG-IMPLICIT-JOIN` | info | 逗号连接在 GP 上易变笛卡尔积 |
 
-## 六、不确定项
+## 六、本项目已实测的列类型（先查这里，别猜）
+
+`ads.ads_intern_bi_product_output_indicator_mf` 的 `pg_typeof` 结果（已确认）：
+
+| 列 | 类型 | 因此怎么写 |
+|---|---|---|
+| `biz_month` | `character varying` | 直接等值：`biz_month = '${biz_month}'`；若库里存 `YYYY-MM-DD` 则改 `LIKE '${biz_month}%'` |
+| `system_value` | `numeric` | `SUM(system_value)` 即可，无需 `::numeric`（写了也无害） |
+| `is_sum` | `boolean` | **`is_sum IS TRUE`**，不能写 `= 1`（会报 `operator does not exist: boolean = integer`） |
+
+把这类结果记进配方的 `source.column_types`，`dialect.lint()` 就会拿它判定，
+不再对"拿文本比日期列"这类**依赖列类型**的规则瞎报：
+
+```jsonc
+"source": {
+  "column_types": { "biz_month": "character varying",
+                    "system_value": "numeric", "is_sum": "boolean" }
+}
+```
+
+探针 SQL（新表先跑一遍）：
+
+```sql
+SELECT pg_typeof(biz_month), pg_typeof(system_value), pg_typeof(is_sum)
+FROM ads.ads_intern_bi_product_output_indicator_mf LIMIT 5;
+```
+
+## 七、不确定项
 
 1. `biz_month` 到底是 `text('2025-01')` 还是 `date`：决定了 `= '${biz_month}'` 还是
    `= to_date('${biz_month}','YYYY-MM')`。样例按 text 写，date 场景给出了替代写法。

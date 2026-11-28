@@ -334,6 +334,9 @@ def main(argv=None):
 
     d = recipe_dialect(r)
     src = r.get("source") or {}
+    # 列类型：SELECT 别名（columns） + 源表物理列（column_types，pg_typeof 探针结果）
+    known_types = {c["name"]: c.get("type", "string") for c in (src.get("columns") or [])}
+    known_types.update(src.get("column_types") or {})
     if (src.get("type") or "sql").lower() == "sql":
         q = src.get("query") or ""
         print(f"\n--- SQL 方言检查（目标 {d}）---")
@@ -341,7 +344,7 @@ def main(argv=None):
             newq = frdialect.adapt(q, d)
             if newq != q:
                 print("已自动改写：\n" + newq)
-        print(frdialect.lint_summary(frdialect.adapt(q, d) if a.adapt else q, d))
+        print(frdialect.lint_summary(frdialect.adapt(q, d) if a.adapt else q, d, known_types))
         if a.adapt:
             r = json.loads(json.dumps(r))
             r["source"]["query"] = frdialect.adapt(q, d)

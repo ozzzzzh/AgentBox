@@ -65,7 +65,8 @@ python scripts/cpt_analyze.py 模板.cpt         # 血缘 / 逻辑图 / 诊断
 
 参考文档：`references/protocol.md`（协议）、`references/datasets-debug.md`（数据集与排查）、
 `references/production-findings.md`（**生产模板实测：填报控件/多提交规则/连接名坑**）、
-`references/sql-dialects.md`（**PG/GP 方言对照，目标库就是这两个**）、
+`references/prompt-template.md`（**给用户的提示词模板，含必填格与三问**）、
+`references/sql-dialects.md`（**PG/GP 方言对照 + 已实测列类型**）、
 `references/formulas-and-params.md`（公式与参数怎么落）、`references/patching.md`（改模板操作字典）、
 `references/zjky-standard.md`（6.2 换算表）。
 
