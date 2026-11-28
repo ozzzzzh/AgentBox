@@ -36,6 +36,7 @@ if HERE not in sys.path:
 
 import frcpt  # noqa: E402
 import zjky  # noqa: E402
+import dialect  # noqa: E402
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -402,31 +403,48 @@ def _apply_expand(cell: frcpt.Cell, value) -> None:
 
 # --------------------------------------------------------------------------- build
 def _build_writeback(spec: Dict[str, Any], xls, cfg: Dict[str, Any]) -> Optional[frcpt.WriteBack]:
-    """填报提交配置（智能提交到数据库表）。"""
+    """填报提交配置（一条提交规则 = 一个 SubmitVisitor / 一张目标表）。"""
     if not spec:
         return None
     wb = frcpt.WriteBack(
-        name=spec.get("submitter_name", "内置SQL1"),
-        ds_name=spec.get("connection", "FRDemo"),
+        name=spec.get("submitter_name") or spec.get("name") or "内置SQL1",
+        ds_name=spec.get("connection") or spec.get("ds_name") or "FRDemo",
         table_schema=spec.get("schema", ""),
-        table_name=spec.get("table", ""),
+        table_name=spec.get("table", "") or spec.get("table_name", ""),
         update_attr=bool(spec.get("update_status", True)),
     )
     for m in spec.get("mappings", []):
-        cell_ref = m.get("cell")
-        col = row = None
-        if cell_ref:
-            mm = re.match(r"([A-Z]+)(\d+)", str(cell_ref).upper())
-            if mm:
-                col = _col_index(mm.group(1))
-                row = int(mm.group(2)) - 1
-        wb.mappings.append(frcpt.ColumnMapping(
-            column_name=m.get("column", ""),
-            is_key=bool(m.get("is_key", False)),
-            column=col, row=row,
-            formula=m.get("formula", ""),
-        ))
+        cm = frcpt.ColumnMapping(column_name=m.get("column", ""),
+                                 is_key=bool(m.get("is_key", False)))
+        # ① 单格 / 多格映射
+        if m.get("cells"):
+            for ref in m["cells"]:
+                mm = re.match(r"([A-Z]+)(\d+)", str(ref).upper())
+                if not mm:
+                    raise ValueError(f"write_back.mappings.cells 里的引用非法: {ref!r}")
+                cm.rows.append((_col_index(mm.group(1)), int(mm.group(2)) - 1))
+        elif m.get("cell"):
+            mm = re.match(r"([A-Z]+)(\d+)", str(m["cell"]).upper())
+            if not mm:
+                raise ValueError(f"write_back.mappings.cell 非法: {m['cell']!r}")
+            cm.column, cm.row = _col_index(mm.group(1)), int(mm.group(2)) - 1
+        # ② 直接给值公式（控件参数等）
+        if m.get("formula"):
+            cm.formula = m["formula"]
+        # ③ 命名参数（提交时算出来的键，如"上季度末"）
+        if m.get("parameter"):
+            p = m["parameter"]
+            cm.parameter = (p.get("name", ""), p.get("expr", ""))
+        wb.mappings.append(cm)
     return wb
+
+
+def _build_writebacks(spec: Any, xls, cfg: Dict[str, Any]) -> List[frcpt.WriteBack]:
+    """支持单条（dict）或多条（list）提交规则——生产模板常有多张目标表。"""
+    if not spec:
+        return []
+    specs = spec if isinstance(spec, list) else [spec]
+    return [w for w in (_build_writeback(s, xls, cfg) for s in specs) if w is not None]
 
 
 def apply_standard(wb: frcpt.Workbook, cfg: Dict[str, Any]) -> None:
@@ -452,7 +470,8 @@ def apply_standard(wb: frcpt.Workbook, cfg: Dict[str, Any]) -> None:
         layout.tail_blank_rows = tail
         zjky.apply(sh, roles, layout, wb.styles, entry=entry)
         if entry:
-            sh.write_back = _build_writeback(cfg.get("write_back"), None, cfg)
+            sh.write_backs = _build_writebacks(
+                cfg.get("write_backs") or cfg.get("write_back"), None, cfg)
 
 
 def build(cfg: Dict[str, Any], cfg_dir: str) -> frcpt.Workbook:
@@ -482,11 +501,31 @@ def main(argv=None):
     ap.add_argument("config")
     ap.add_argument("--out", help="override output path")
     ap.add_argument("--dry-run", action="store_true", help="build + validate, do not write")
+    ap.add_argument("--adapt", action="store_true",
+                    help="按 PG/GP 方言自动改写数据集 SQL（方括号/TOP/ISNULL 等）")
     a = ap.parse_args(argv)
     cfg_path = os.path.abspath(a.config)
     cfg = json.load(open(cfg_path, encoding="utf-8-sig"))
     cfg_dir = os.path.dirname(cfg_path)
+
+    d = dialect.normalize(cfg.get("dialect") or "greenplum")
+    if a.adapt:
+        for spec in cfg.get("datasets", []):
+            if (spec.get("type") or "sql").lower() in ("sql", "db", "dbtabledata") and spec.get("query"):
+                spec["query"] = dialect.adapt(spec["query"], d)
     wb = build(cfg, cfg_dir)
+
+    sql_issues = []
+    for ds in wb.datasets:
+        if isinstance(ds, frcpt.SqlDataset):
+            sql_issues.extend(dialect.lint(ds.query, d))
+    if any(isinstance(ds, frcpt.SqlDataset) for ds in wb.datasets):
+        print(f"--- SQL 方言检查（目标 {d}）---")
+        if sql_issues:
+            for i in sql_issues:
+                print(f"  [{i['level']}] {i['code']}: {i['message']} —— {i['suggestion']}")
+        else:
+            print("SQL 方言检查通过（PostgreSQL / Greenplum 兼容）。")
 
     issues = frcpt.validate(wb)
     print(frcpt.describe_issue_summary(issues))

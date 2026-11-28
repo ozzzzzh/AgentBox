@@ -46,6 +46,8 @@ python scripts/cpt_analyze.py 模板.cpt         # 血缘 / 逻辑图 / 诊断
   转义 `&t;`/`&n;`，`ColumnNames` 分隔符是 `,,.,,`。**永远用 `scripts/frcodec.py` 生成，
   不要手写 blob。**
 - 数据库连接**不在 CPT 里**，只有连接名引用（`NameDatabaseConnection/DatabaseName`）。
+- **数据集 SQL 只写 PostgreSQL / Greenplum 方言**：方括号标识符、`TOP n`、`ISNULL`、`GETDATE()`
+  都要改（`scripts/dialect.py` 会检查并自动改写能改的）。`${x}` 是文本替换，日期要显式转。
 
 ## 工具
 
@@ -59,22 +61,31 @@ python scripts/cpt_analyze.py 模板.cpt         # 血缘 / 逻辑图 / 诊断
 | `scripts/cpt_patch.py` | 操作列表（JSON）→ 改 CPT，含变更清单与校验 |
 | `scripts/cpt_dump.py` | 反向：CPT → 人可读结构 |
 | `scripts/cpt_analyze.py` | 血缘 / 逻辑图 / 反推 SQL / 诊断修复 |
+| `scripts/dialect.py` | 数据集 SQL 的 PostgreSQL / Greenplum 方言检查与改写 |
 
 参考文档：`references/protocol.md`（协议）、`references/datasets-debug.md`（数据集与排查）、
+`references/production-findings.md`（**生产模板实测：填报控件/多提交规则/连接名坑**）、
+`references/sql-dialects.md`（**PG/GP 方言对照，目标库就是这两个**）、
 `references/formulas-and-params.md`（公式与参数怎么落）、`references/patching.md`（改模板操作字典）、
 `references/zjky-standard.md`（6.2 换算表）。
 
 ## 铁律
 
-1. **不猜节点名和属性名。** 生成任何节点前，确认它已出现在官方模板语料里；本项目有
+1. **不猜节点名和属性名。** 生成任何节点前，确认它已出现在官方模板或生产模板语料里；本项目有
    `verify_generated.py`（工作区）做属性词汇表比对。凭空造属性 = 模板能打开但行为不对。
 2. **不手写 `<RowData>`。** 用 `frcodec.encode_row_blob`。
 3. **改文件先留退路。** `cpt_patch` 默认写 `*.patched.cpt`，要原地改才加 `--in-place`。
 4. **改完必须过两道检查**：`frcpt.validate`（引用/越界/重叠）和 `zjky.check`（6.2 规范）。
 5. **字号/行高/列宽一律走换算函数**（`pt_to_font_size` / `pt_to_fu` / `zjky.mm_to_fu`），
    不要直接填阿拉伯数字。
+6. **碰生产模板前先跑保真回归**：`production_roundtrip.py`（工作区）。生产模板里有官方示例
+   没有的东西——单元格填报控件 `Widget`、多条 `SubmitVisitor`、`ColumnRowGroup`、插件属性
+   节点（`StrategyConfigsAttr` / `ExcelImportTemplateAttr`）、5 类高亮动作。模型用
+   `extras` + `child_order` + `*_raw` 做透传保序，任何新增节点都要验证它们没被吃掉。
 
 ## 已知边界
 
 不生成图表（`t="CC"`）、不生成决策报表 `.frm`、日期类型不进内置数据集、
-样式库引用（`<Style index>`）只在读时保留。详见 references/protocol.md 末节。
+样式库引用（`<Style index>`）只在读时保留；填报控件只建模 `TextEditor`，
+高亮动作只保留原文不能按语义生成。详见 `references/protocol.md` 末节与
+`references/production-findings.md` 第七节。

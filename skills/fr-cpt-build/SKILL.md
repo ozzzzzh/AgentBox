@@ -27,10 +27,10 @@ whenToUse: 用户给了表样（Excel/截图/字段清单）与数据集（SQL �
 `source` 是唯一的数据来源声明。两种：
 
 ```jsonc
-{ "name": "ds1", "type": "sql", "connection": "FRDemo",
-  "query": "SELECT 地区, SUM(销量) AS 销量 FROM 销量 WHERE dt = '${biz_date}' GROUP BY 地区",
-  "parameters": [{"name": "biz_date", "value": "2025-01-01"}],
-  "columns": [{"name":"地区","type":"string"},{"name":"销量","type":"integer"}] }
+{ "name": "ds1", "type": "sql", "connection": "ads_gp",
+  "query": "SELECT 地区, SUM(销量)::numeric AS \"销量\" FROM ads.t WHERE biz_month = '${biz_month}' GROUP BY 地区",
+  "parameters": [{"name": "biz_month", "value": "2025-01"}],
+  "columns": [{"name":"地区","type":"string"},{"name":"销量","type":"decimal"}] }
 ```
 ```jsonc
 { "name": "ds1", "type": "embedded",
@@ -39,9 +39,35 @@ whenToUse: 用户给了表样（Excel/截图/字段清单）与数据集（SQL �
 ```
 
 - `columns` 两个用途：校验 `fields` 是否存在、决定"维度 vs 度量"（`integer/double/decimal` 算数值）。
-  SQL 数据集也建议写（从 `information_schema` 或 DDL 抄），没有就靠 SQL 里的 `sum(...) AS 别名` 猜。
+  SQL 数据集**必须写**（CPT 里不存 SQL 数据集的列类型，不写就只能靠 `sum(...) AS 别名` 猜，
+  猜错会让数字列按文本居中显示）。
 - SQL 里出现 `${x}`，就必须在 `parameters` 里声明 `x`，否则运行期取不到值（校验器会挡）。
 - 能离线就选 `embedded`：数据随模板走，跨机器可跑。
+
+### 数据库方言：PostgreSQL / Greenplum（默认）
+
+目标库是 PG 系，配方里写 `"dialect": "greenplum"`（或 `"postgres"`，默认就是 greenplum）。
+生成前会跑方言检查，`--adapt` 可自动改写能安全改的那些。**必守的几条**：
+
+| 别写 | 要写 |
+|---|---|
+| `[表名]` / `` `表名` `` | `"表名"`（双引号；裸写会被 PG 折叠成小写） |
+| `SELECT TOP 10` | `... LIMIT 10`（在 ORDER BY 之后） |
+| `ISNULL(x,0)` / `IFNULL(x,0)` | `COALESCE(x,0)` |
+| `GETDATE()` | `CURRENT_DATE` / `now()` |
+| `DATE_FORMAT(d,'%Y-%m')` | `to_char(d,'YYYY-MM')` |
+| `a + '单位'` | `a \|\| '单位'` 或 `concat(a,'单位')` |
+| `'${x}'` 直接和日期列比 | `to_date('${x}','YYYY-MM')` 或 `'${x}'::date` |
+
+补充三条最容易翻车的：
+
+1. **`${x}` 是文本替换不是绑定参数**→字符串要自己加单引号，多值写 `in (${ids})`，
+   日期要显式转；参数值的校验是平台的事，模板只能保证语法正确。
+2. **`concat()` 忽略 NULL**，`||` 遇到 NULL 整格变 NULL；拼"指标(单位)"用 `concat()`。
+3. **`SUM(x)::numeric`**：上游是 `float8` 时先转 numeric 再汇总/展示，避免浮点尾巴。
+   GP 上还要注意分布键——大表 JOIN 让连接键等于分布键，否则会慢到预览超时（不报语法错）。
+
+完整对照表与 GP 专有注意事项：`../fr-cpt/references/sql-dialects.md`。
 
 ### 第 2 步：把需求翻译成列定义
 
@@ -73,25 +99,46 @@ whenToUse: 用户给了表样（Excel/截图/字段清单）与数据集（SQL �
 ### 第 4 步：编译与核对
 
 ```bash
+python ../fr-cpt/scripts/recipe2cpt.py 配方.json --plan          # 配方校验 + SQL 方言检查
 python ../fr-cpt/scripts/recipe2cpt.py 配方.json --out 结果.cpt --xlsx 预览.xlsx
 ```
 
-- 先跑 **配方校验**（字段缺失、字段不在源表、footer 长度、参数未声明），有问题直接改配方；
+- 先跑 **配方校验**（字段缺失、字段不在源表、footer 长度、参数未声明）；
+- 再跑 **SQL 方言检查**（目标 PG/GP；`--adapt` 可自动改写方括号/TOP/ISNULL 这类）；
 - 再看 **结构校验** 与 **6.2 自查**，两条都绿；
 - `--xlsx` 产出的预览表是给业务方确认版式的，比读 XML 有用；
 - 最后用 `fr-cpt-analyze` 出逻辑图，把口径回给用户确认：
-  `python ../fr-cpt/scripts/cpt_analyze.py 结果.cpt`
+  `python ../fr-cpt/scripts/cpt_analyze.py 结果.cpt --dialect greenplum`
 
 ### 填报表（录入）的配方增量
 
 ```jsonc
 "report_kind": "entry",
-"write_back": {
-  "connection": "FRDemo", "table": "sales_detail",
-  "mappings": [ {"column":"地区","cell":"A3","is_key":true}, {"column":"销量","cell":"D3"} ]
-}
+"write_backs": [                       // 数组：一张模板可有多条提交规则（多张目标表）
+  {
+    "name": "差异性分析填报",           // SubmitVisitor 名，按业务起名
+    "connection": "生产环境Greenplum",  // 注意：平台连接名对不上就是取数/提交双失败
+    "schema": "dm_intern", "table": "dm_intern_roe_analyse_data_nf",
+    "mappings": [
+      { "column": "entity_codea", "formula": "=$comboBox0_companyA", "is_key": true },
+      { "column": "timekey", "parameter": { "name": "prevQuarterEndDate", "expr": "=IF(…)" }, "is_key": true },
+      { "column": "diff_quarter", "cells": ["F5", "F7", "F9"] },      // 多格 → ColumnRowGroup
+      { "column": "diff_company", "cell": "I5" }                      // 单格 → ColumnRow
+    ]
+  }
+]
 ```
-填报表的取数/公式格会自动带 `E3F1F1` 底色 + `$op='view'` 条件属性（一套表兼作分析表）。
+
+- `report_kind: "entry"` 会自动给**每个取数格挂 `TextEditor` 控件**（没控件就只能看不能填），
+  并给取数/公式格加 `E3F1F1` 底色 + `$op='view'` 转白的条件属性。
+- 映射三种形态都要用对：`cell`/`cells` = 单元格取值；`formula` = 直接算（常取控件参数
+  `$控件名`）；`parameter` = 命名参数（提交时参与更新条件，常用来算时间键）。
+- `is_key: true` 参与更新条件；漏标会让提交变成"全表更新"。
+- 时间键如果用公式算（`prevQuarterEndDate` 那种），务必和**数据集筛选用的时间口径**一致，
+  否则分析视图与落库数据对不上——这是生产模板里最容易出的事故。
+
+生产模板实测细节（多提交规则、`ColumnRowGroup`、参数面板字典、连接名带换行的坑）见
+`../fr-cpt/references/production-findings.md`。
 
 ## 路径 B：Excel 表样
 

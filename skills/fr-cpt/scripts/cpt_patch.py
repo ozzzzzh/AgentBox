@@ -446,8 +446,12 @@ class Patcher:
         fill = frcpt.fr_color(op.get("fill", "FFFFFF"))
         name = op.get("name") or "条件属性1"
         for cell in cells:
-            cell.highlights.append(frcpt.Highlight(name=name, formula=formula,
-                                                   background=fill, scope=1))
+            new_hl = frcpt.Highlight(name=name, formula=formula, background=fill, scope=1)
+            if cell.highlight_raw is not None:
+                # 已有条件属性块：追加进去，保留原有的 RowHeight/ColWidth/… 等动作
+                cell.highlight_raw.append(new_hl.to_element())
+            else:
+                cell.highlights.append(new_hl)
             self._note(f"{frcpt.cell_ref(cell.c, cell.r)} 增加条件属性 {formula!r} → 底色 "
                        f"{fill & 0xFFFFFF:06X}")
         return len(cells)

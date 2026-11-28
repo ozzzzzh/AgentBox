@@ -61,6 +61,22 @@
 `Query` 里的方言细节（`[销量]A` 这种写法）来自 FineReport 的「数据集表别名」语法，
 换库时最容易崩的地方，生成器不做改写、原样保留。
 
+**本项目的目标库是 PostgreSQL / Greenplum**，所以数据集 SQL 必须写成 PG 方言：
+
+| 别写（SQL Server/MySQL 习惯） | 要写（PG/GP） |
+|---|---|
+| `[表名]` / `` `表名` `` | `"表名"` |
+| `SELECT TOP 10` | `LIMIT 10`（ORDER BY 之后） |
+| `ISNULL(x,0)` / `IFNULL(x,0)` | `COALESCE(x,0)` |
+| `GETDATE()` | `CURRENT_DATE` / `now()` |
+| `DATE_FORMAT(d,'%Y-%m')` | `to_char(d,'YYYY-MM')` |
+| `a + '单位'` | `a \|\| '单位'` 或 `concat(a,'单位')` |
+
+三条必守：`GROUP BY` 要列全非聚合列；类型转换用 `::`（`SUM(x)::numeric`）；
+`concat()` 忽略 NULL 而 `||` 遇 NULL 返回 NULL。GP 额外注意分布键——JOIN 键不等于分布键会
+重分布，表现为"预览很慢"而不是语法错。`tools/dialect.py` 实现这套检查与自动改写，
+完整对照表见 `references/sql-dialects.md`。
+
 ### 3.2 内置数据集（`com.fr.data.impl.EmbeddedTableData`，即「内置数据集」）
 
 数据直接编码进 CPT，**不需要任何数据库连接**，这是本项目生成器的主力。

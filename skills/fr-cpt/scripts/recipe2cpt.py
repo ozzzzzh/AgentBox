@@ -50,6 +50,7 @@ if HERE not in sys.path:
 import frcpt  # noqa: E402
 import zjky  # noqa: E402
 import xlsx2cpt  # noqa: E402
+import dialect as frdialect  # noqa: E402
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -141,18 +142,30 @@ def _source_dataset(r: Dict[str, Any]) -> frcpt.Dataset:
                         for p in (src.get("parameters") or [])],
             page_query=src.get("page_query", ""),
             max_mem_row_count=int(src.get("max_mem_row_count", -1)),
+            columns=[(c["name"], c.get("type", "string")) for c in (src.get("columns") or [])],
         )
     cols = [(c["name"], c.get("type", "string")) for c in src["columns"]]
     rows = [list(x) for x in (src.get("rows") or [])]
     return frcpt.EmbeddedDataset(name=src["name"], columns=cols, rows=rows)
 
 
-def compile_recipe(r: Dict[str, Any]) -> frcpt.Workbook:
+def recipe_dialect(r: Dict[str, Any]) -> str:
+    """配方里的数据库方言：source.dialect 优先，其次顶层 dialect，默认 greenplum。
+
+    目标库是 PostgreSQL / Greenplum，所以默认值就取 greenplum，避免默认放过 MySQL 写法。
+    """
+    src = r.get("source") or {}
+    return frdialect.normalize(src.get("dialect") or r.get("dialect") or "greenplum")
+
+
+def compile_recipe(r: Dict[str, Any], adapt_sql: bool = False) -> frcpt.Workbook:
     errs = validate_recipe(r)
     if errs:
         raise RecipeError("配方有问题：\n  - " + "\n  - ".join(errs))
 
     ds = _source_dataset(r)
+    if adapt_sql and isinstance(ds, frcpt.SqlDataset):
+        ds.query = frdialect.adapt(ds.query, recipe_dialect(r))
     wb = frcpt.Workbook(datasets=[ds])
     sheet = frcpt.Sheet(name=r.get("sheet_name") or "sheet1")
 
@@ -307,6 +320,8 @@ def main(argv=None):
     ap.add_argument("--out")
     ap.add_argument("--xlsx", help="同时导出一份 Excel 预览")
     ap.add_argument("--plan", action="store_true", help="只校验配方，不生成")
+    ap.add_argument("--adapt", action="store_true",
+                    help="按 PG/GP 方言自动改写数据集 SQL（方括号/TOP/ISNULL 等）")
     a = ap.parse_args(argv)
 
     r = json.load(open(a.recipe, encoding="utf-8-sig"))
@@ -316,6 +331,21 @@ def main(argv=None):
         print("  -", e)
     if errs:
         return 1
+
+    d = recipe_dialect(r)
+    src = r.get("source") or {}
+    if (src.get("type") or "sql").lower() == "sql":
+        q = src.get("query") or ""
+        print(f"\n--- SQL 方言检查（目标 {d}）---")
+        if a.adapt:
+            newq = frdialect.adapt(q, d)
+            if newq != q:
+                print("已自动改写：\n" + newq)
+        print(frdialect.lint_summary(frdialect.adapt(q, d) if a.adapt else q, d))
+        if a.adapt:
+            r = json.loads(json.dumps(r))
+            r["source"]["query"] = frdialect.adapt(q, d)
+
     if a.plan:
         return 0
 

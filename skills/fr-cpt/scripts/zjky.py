@@ -196,9 +196,15 @@ def apply(sheet: frcpt.Sheet, roles: Dict[Tuple[int, int], str], layout: Layout,
         role = roles.get((cell.c, cell.r))
         if role:
             cell.style = styles_table.add(role_styles[role])
-        if entry and role == BODY_FORMULA and not cell.highlights:
+        if entry and role == BODY_FORMULA and not cell.has_view_highlight():
             # 规范：填报表兼分析表时，取数/公式格在 $op='view' 下底色转白，一套表两用
-            cell.highlights.append(view_highlight())
+            if cell.highlight_raw is not None:
+                cell.highlight_raw.append(view_highlight().to_element())
+            else:
+                cell.highlights.append(view_highlight())
+        if entry and isinstance(cell.value, frcpt.DSColumn) and cell.widget is None:
+            # 填报表的取数格同时是录入格：挂一个文本控件，否则打开只能看不能填
+            cell.widget = frcpt.Widget()
     # 行高/列宽统一
     mc, mr = sheet.extent()
     sheet.default_row_height = ROW_HEIGHT_FU
@@ -287,6 +293,14 @@ def _column_kind(wb: Optional[frcpt.Workbook], ds_name: str, column_name: str) -
                         return "num"
                     return "text"
         if isinstance(ds, frcpt.SqlDataset):
+            # 1) 调用方声明的字段类型优先（SQL 数据集的类型本来就存不进 CPT）
+            for cname, ctype in (ds.columns or []):
+                if cname == column_name:
+                    t = (ctype or "").lower()
+                    if "int" in t or "double" in t or "long" in t or "decimal" in t or "float" in t:
+                        return "num"
+                    return "text"
+            # 2) 退而求其次：从 SQL 的聚合别名猜
             return "num" if column_name in sql_numeric_columns(ds.query) else "text"
     return "text"
 
@@ -355,8 +369,7 @@ def check(wb: frcpt.Workbook, entry: bool = False) -> List[frcpt.Issue]:
                                  f"{ref}（{ROLE_LABEL[role]}）偏离规范：" + "；".join(diffs[:4]),
                                  sh.name))
             if entry and isinstance(cell.value, frcpt.Formula):
-                if not any("op" in (h.formula or "") and h.background == frcpt.fr_color(C_WHITE)
-                           for h in cell.highlights):
+                if not cell.has_view_highlight():
                     out.append(Issue("warning", "ZJ-VIEW-HIGHLIGHT",
                                      f"{ref} 是填报表公式格，缺少 $op='view' 底色转白条件属性",
                                      sh.name))

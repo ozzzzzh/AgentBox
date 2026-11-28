@@ -203,12 +203,13 @@ def build_lineage(wb: frcpt.Workbook, sheet: frcpt.Sheet,
 
 
 def sql_sketch(wb: frcpt.Workbook, sheet: frcpt.Sheet) -> str:
-    """按血缘反推一段等价查询（只用于核对口径，不保证可执行）。
+    """还原这段报表的取数口径。
 
-    维度 = 非聚合的文本列；度量 = 非聚合的数值列 + 聚合列。
-    只有存在聚合时才 GROUP BY，否则退化成明细查询——这样和帆软的实际语义一致。
+    - 数据集是 SQL 时：直接给**数据集自己的 SQL**（那才是真正的口径来源），
+      再补一段"报表在这之上怎么摆"的布局说明。不要伪造 `FROM ds1`——ds1 是数据集不是表。
+    - 数据集是内置表时：反推一段等价 SELECT（维度进 GROUP BY，数值度量只进 SELECT）。
     """
-    dims, measures, conds, params, aggs, joins = [], [], [], [], [], []
+    dims, hdims, measures, conds, params, aggs, joins = [], [], [], [], [], [], []
     ds_votes: Dict[str, int] = {}
     for cell in sorted(sheet.cells, key=lambda x: x.r * 1000 + x.c):
         v = cell.value
@@ -220,49 +221,69 @@ def sql_sketch(wb: frcpt.Workbook, sheet: frcpt.Sheet) -> str:
             aggs.append(f"{fn}({v.column_name}) AS {v.column_name}_合计")
         elif zjky._column_kind(wb, v.ds_name, v.column_name) == "num":
             measures.append(v.column_name)
+        elif cell.expand.direction == 1:
+            hdims.append(v.column_name)
         else:
             dims.append(v.column_name)
         if v.condition is not None:
-            c = _cond_desc(v.condition)
-            c = c.replace("过滤", "").strip().strip("（）")
+            c = _cond_desc(v.condition).replace("过滤", "").strip().strip("（）")
             if "=" in c and "." in c.split("=", 1)[1]:
-                joins.append(f"{v.ds_name}.{c}")      # 跨数据集关联，不是 WHERE
+                joins.append(f"{v.ds_name}.{c}")
             elif c.startswith("公式"):
                 conds.append(f"({c[2:].strip()})")
             elif "列表" in c or "多值" in c:
-                conds.append(None)                    # 占位，最后合并成一条注释
+                conds.append(None)
             elif c:
                 conds.append(c)
-    seen, uniq_dims = set(), []
-    for d in dims:
-        if d not in seen:
-            seen.add(d)
-            uniq_dims.append(d)
-    seenm, uniq_measures = set(), []
-    for m in measures:
-        if m not in seenm:
-            seenm.add(m)
-            uniq_measures.append(m)
 
-    src = max(ds_votes, key=ds_votes.get) if ds_votes else "（无数据源）"
-    for ds in wb.datasets:
-        if ds.name == src and isinstance(ds, frcpt.SqlDataset):
-            for p in ds.parameters:
-                params.append(f"{p.name} = {p.value!r}")
-    cols = uniq_dims + uniq_measures + aggs
-    body = f"SELECT {', '.join(cols) if cols else '*'}\nFROM {src}"
+    def uniq(seq):
+        out, seen = [], set()
+        for x in seq:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
+    src = max(ds_votes, key=ds_votes.get) if ds_votes else None
+    ds = next((d for d in wb.datasets if d.name == src), None)
+    if isinstance(ds, frcpt.SqlDataset):
+        params = [f"{p.name} = {p.value!r}" for p in ds.parameters]
+
+    layout = []
+    if uniq(dims):
+        layout.append("行维度: " + ", ".join(uniq(dims)) + "（纵向分组/扩展）")
+    if uniq(hdims):
+        layout.append("列维度: " + ", ".join(uniq(hdims)) + "（横向分组/扩展）")
+    if uniq(measures):
+        layout.append("度量  : " + ", ".join(uniq(measures)) + "（明细取数）")
+    if aggs:
+        layout.append("汇总  : " + ", ".join(aggs))
+    if joins:
+        layout.append("跨集关联: " + "; ".join(sorted(set(joins))))
+    if params:
+        layout.append("数据集参数: " + "; ".join(params))
+
+    if isinstance(ds, frcpt.SqlDataset):
+        head = f"/* 数据集 {ds.name}（连接 {ds.connection}）的取数 SQL —— 口径的来源 */"
+        body = head + "\n" + ds.query.strip() + "\n"
+        if layout:
+            body += "\n/* 报表在它之上的呈现 */\n" + "\n".join("-- " + x for x in layout)
+        return body
+
+    cols = uniq(dims) + uniq(hdims) + uniq(measures) + aggs
+    out = f"SELECT {', '.join(cols) if cols else '*'}\nFROM {src or '（无数据源）'}"
     real_conds = [c for c in conds if c]
     if real_conds:
-        body += "\nWHERE " + " AND ".join(real_conds)
+        out += "\nWHERE " + " AND ".join(real_conds)
     if joins:
-        body += "\n-- 跨集关联: " + "; ".join(sorted(set(joins)))
+        out += "\n-- 跨集关联: " + "; ".join(sorted(set(joins)))
     if len(real_conds) < len(conds):
-        body += "\n-- 另有列表/多值过滤条件（模板上用 ListCondition 配置，需人工核对）"
+        out += "\n-- 另有列表/多值过滤条件（ListCondition，需人工核对）"
     if aggs:
-        body += "\nGROUP BY " + (", ".join(uniq_dims) if uniq_dims else "—")
+        out += "\nGROUP BY " + (", ".join(uniq(dims + hdims)) or "—")
     if params:
-        body += "\n-- 数据集参数: " + "; ".join(params)
-    return body
+        out += "\n-- 数据集参数: " + "; ".join(params)
+    return out
 
 
 # ---------------------------------------------------------------- 诊断
@@ -472,9 +493,17 @@ def main(argv=None):
     ap.add_argument("--md", help="输出 Markdown 报告")
     ap.add_argument("--entry", action="store_true", help="按填报表口径")
     ap.add_argument("--fix", action="store_true", help="应用安全修复并写出 *.fixed.cpt")
+    ap.add_argument("--dialect", help="检查数据集 SQL 的方言兼容性（postgres / greenplum）")
     a = ap.parse_args(argv)
 
     wb = frcpt.read_cpt(a.file)
+    if a.dialect:
+        import dialect as frdialect
+        for ds in wb.datasets:
+            if isinstance(ds, frcpt.SqlDataset):
+                print(f"--- 数据集 {ds.name} 的 SQL 方言（目标 {frdialect.normalize(a.dialect)}）---")
+                print(frdialect.lint_summary(ds.query, a.dialect))
+                print()
     if a.mermaid:
         print(to_mermaid(wb))
         return 0

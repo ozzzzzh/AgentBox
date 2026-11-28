@@ -131,6 +131,38 @@ def cdata(text: str) -> Any:
     return etree.CDATA(str(text).replace("]]", "]]A"))
 
 
+def merge_children(default_order, built, extras):
+    """按原始子节点顺序重建一个元素的内容，已知节点用新生成的，未知节点原样插回。
+
+    ``built``   : {tag: element 或 [element…]}  —— 本模型会重新生成的节点（同名可多个）
+    ``extras``  : [(orig_index, el)]            —— 原文件里本模型不认识的节点（深拷贝）
+    保序的意义：帆软的读取端虽按标签分派，但设计器保存时顺序固定，人工 diff 时不至于
+    整块漂移；更重要的是 ``Widget`` 之类节点位置写错会让设计器认不出来。
+    """
+    norm = {k: (list(v) if isinstance(v, (list, tuple)) else [v]) for k, v in built.items()}
+    queues: Dict[str, List[Any]] = {}
+    for _idx, el in extras:
+        queues.setdefault(el.tag, []).append(el)
+    out = []
+    used = set()
+    for tag in (default_order or []):
+        if tag in norm and tag not in used:
+            out.extend(norm[tag])
+            used.add(tag)
+        if queues.get(tag):
+            out.extend(queues.pop(tag))
+    for tag, els in norm.items():
+        if tag not in used:
+            out.extend(els)
+    for _idx, el in sorted(extras, key=lambda x: x[0]):
+        for tag, q in queues.items():
+            if el in q:
+                out.append(el)
+                q.remove(el)
+                break
+    return out
+
+
 # --------------------------------------------------------------------------- styles
 @dataclass
 class Border:
@@ -417,6 +449,58 @@ class Highlight:
 
 
 @dataclass
+class Widget:
+    """单元格填报控件（填报表的输入格）。
+
+    生产模板里的实际形态（ROE分析填报.cpt，105 个）::
+
+        <C c="5" r="4" s="6">
+          <O …/><PrivilegeControl/><CellPageAttr/>
+          <Widget class="com.fr.form.ui.TextEditor">
+            <WidgetAttr aspectRatioLocked="false" aspectRatioBackup="-1.0" description="">
+              <MobileBookMark useBookMark="false" bookMarkName="" frozen="false" index="-1" oldWidgetName=""/>
+              <PrivilegeControl/>
+            </WidgetAttr>
+            <TextAttr/><Reg class="com.fr.form.ui.reg.NoneReg"/>
+            <widgetValue/><MobileScanCodeAttr scanCode="true" textInputMode="0"/>
+          </Widget>
+          <HighlightList/><Expand/>
+        </C>
+    """
+    class_name: str = "com.fr.form.ui.TextEditor"
+    name: str = ""
+    description: str = ""
+    regex: str = "com.fr.form.ui.reg.NoneReg"
+    scan_code: bool = True
+    text_input_mode: int = 0
+
+    def to_element(self) -> etree._Element:
+        w = etree.Element("Widget")
+        w.set("class", self.class_name)
+        attr = etree.SubElement(w, "WidgetAttr")
+        attr.set("aspectRatioLocked", "false")
+        attr.set("aspectRatioBackup", "-1.0")
+        attr.set("description", self.description)
+        mb = etree.SubElement(attr, "MobileBookMark")
+        for k, v in (("useBookMark", "false"), ("bookMarkName", ""), ("frozen", "false"),
+                     ("index", "-1"), ("oldWidgetName", self.name)):
+            mb.set(k, v)
+        etree.SubElement(attr, "PrivilegeControl")
+        if self.name:
+            wn = etree.Element("WidgetName")
+            wn.set("name", self.name)
+            w.insert(0, wn)
+        etree.SubElement(w, "TextAttr")
+        reg = etree.SubElement(w, "Reg")
+        reg.set("class", self.regex)
+        etree.SubElement(w, "widgetValue")
+        scan = etree.SubElement(w, "MobileScanCodeAttr")
+        scan.set("scanCode", "true" if self.scan_code else "false")
+        scan.set("textInputMode", str(self.text_input_mode))
+        return w
+
+
+@dataclass
 class Cell:
     c: int
     r: int
@@ -427,6 +511,26 @@ class Cell:
     expand: Expand = field(default_factory=Expand)
     privilege: bool = True
     highlights: List[Highlight] = field(default_factory=list)
+    # 原样保留的 <HighlightList>（生产模板里的高亮动作远不止背景色：
+    # RowHeightHighlightAction / ColWidthHighlightAction / ValueHighlightAction /
+    # PresentHighlightAction / HyperlinkHighlightAction …，建模成本高且必须无损）
+    highlight_raw: Optional[Any] = None
+    widget: Optional[Widget] = None
+    # 本模型不认识的 <C> 子节点（CellPageAttr / CellGUIAttr / NameJavaScriptGroup /
+    # CellInsertPolicy / Present …）原样保留，(原始下标, 元素) 二元组
+    extras: List[Tuple[int, Any]] = field(default_factory=list)
+    child_order: Optional[List[str]] = None
+
+    DEFAULT_ORDER = ["O", "PrivilegeControl", "CellPageAttr", "Widget",
+                     "HighlightList", "Expand"]
+
+    def has_view_highlight(self, param: str = "op", fill: int = -1) -> bool:
+        """是否已带「$op='view' 时底色转白」的条件属性（填报表兼分析表的口径）。"""
+        if self.highlight_raw is not None:
+            xml = etree.tostring(self.highlight_raw, encoding="unicode")
+            return f"${param}" in xml and f'color="{fill}"' in xml
+        return any(param in (h.formula or "") and h.background == fill
+                   for h in self.highlights)
 
     def to_element(self) -> etree._Element:
         e = etree.Element("C")
@@ -438,16 +542,25 @@ class Cell:
             e.set("rs", str(self.rs))
         if self.style is not None:
             e.set("s", str(self.style))
+        built = {}
         o = self.value.to_element()
         if o is not None:
-            e.append(o)
+            built["O"] = o
         if self.privilege:
-            etree.SubElement(e, "PrivilegeControl")
+            built["PrivilegeControl"] = etree.Element("PrivilegeControl")
+        if self.widget is not None:
+            built["Widget"] = self.widget.to_element()
         if self.highlights:
-            hl = etree.SubElement(e, "HighlightList")
+            hl = etree.Element("HighlightList")
             for h in self.highlights:
                 hl.append(h.to_element())
-        e.append(self.expand.to_element())
+            built["HighlightList"] = hl
+        elif self.highlight_raw is not None:
+            built["HighlightList"] = etree.fromstring(etree.tostring(self.highlight_raw))
+        built["Expand"] = self.expand.to_element()
+        order = self.child_order or self.DEFAULT_ORDER
+        for ch in merge_children(order, built, self.extras):
+            e.append(ch)
         return e
 
 
@@ -478,13 +591,19 @@ class Parameter:
 
 @dataclass
 class SqlDataset(Dataset):
-    """com.fr.data.impl.DBTableData — SQL on a named platform connection."""
+    """com.fr.data.impl.DBTableData — SQL on a named platform connection.
+
+    ``columns`` is *declared schema* (name, java type) supplied by the caller; the CPT
+    format does not store a SQL dataset's column types, so this is metadata used for
+    validation and for deciding 数字 vs 文字 when applying the 6.2 style profile.
+    """
     name: str = "ds1"
     connection: str = "FRDemo"
     query: str = ""
     parameters: List[Parameter] = field(default_factory=list)
     page_query: str = ""
     max_mem_row_count: int = -1
+    columns: List[Tuple[str, str]] = field(default_factory=list)
 
     def to_element(self):
         td = etree.Element("TableData")
@@ -580,12 +699,28 @@ class AliasDataset(Dataset):
 # --------------------------------------------------------------------------- sheets
 @dataclass
 class ColumnMapping:
-    """One ColumnConfig inside a DMLConfig: DB column <- sheet cell (0-based)."""
+    """DMLConfig 里的一条 ColumnConfig：数据库列 ← 单元格 / 公式 / 参数。
+
+    生产模板（ROE分析填报.cpt）里三种形态都出现过：
+      * 单元格映射：``<ColumnRow column="5" row="4"/>``；同名列对应多个格子时包一层
+        ``<ColumnRowGroup>``（40+ 个 ColumnRow）
+      * 公式：``<O t="XMLable" class="com.fr.base.Formula"><Attributes>=$comboBox0_companyA``
+      * 参数：``<Parameter><Attributes name="prevQuarterEndDate"/><O …公式…/></Parameter>``
+    """
     column_name: str = ""
     is_key: bool = False
     column: Optional[int] = None      # 0-based sheet column
     row: Optional[int] = None         # 0-based sheet row
-    formula: str = ""                 # alternative to column/row: <O t="Formula">
+    rows: List[Tuple[int, int]] = field(default_factory=list)   # 多格映射 → ColumnRowGroup
+    formula: str = ""                 # 直接取值公式（控件参数等）
+    parameter: Optional[Tuple[str, str]] = None   # (参数名, 公式)
+
+    def all_rows(self) -> List[Tuple[int, int]]:
+        if self.rows:
+            return list(self.rows)
+        if self.column is not None and self.row is not None:
+            return [(self.column, self.row)]
+        return []
 
     def to_element(self) -> etree._Element:
         cc = etree.Element("ColumnConfig")
@@ -594,10 +729,23 @@ class ColumnMapping:
         cc.set("skipUnmodified", "false")
         if self.formula:
             cc.append(Formula(expr=self.formula).to_element())
-        elif self.column is not None and self.row is not None:
+        elif self.parameter:
+            pname, pexpr = self.parameter
+            p = etree.SubElement(cc, "Parameter")
+            attrs = etree.SubElement(p, "Attributes")
+            attrs.set("name", pname)
+            p.append(Formula(expr=pexpr).to_element())
+        rows = self.all_rows()
+        if len(rows) == 1:
             cr = etree.SubElement(cc, "ColumnRow")
-            cr.set("column", str(self.column))
-            cr.set("row", str(self.row))
+            cr.set("column", str(rows[0][0]))
+            cr.set("row", str(rows[0][1]))
+        elif rows:
+            grp = etree.SubElement(cc, "ColumnRowGroup")
+            for col, row in rows:
+                cr = etree.SubElement(grp, "ColumnRow")
+                cr.set("column", str(col))
+                cr.set("row", str(row))
         return cc
 
 
@@ -611,9 +759,9 @@ class WriteBack:
     mappings: List[ColumnMapping] = field(default_factory=list)
     update_attr: bool = True
 
-    def to_element(self) -> etree._Element:
-        rwa = etree.Element("ReportWriteAttr")
-        sv = etree.SubElement(rwa, "SubmitVisitor")
+    def to_submit_element(self) -> etree._Element:
+        """<SubmitVisitor> 本身（Sheet 负责把它包进 ReportWriteAttr）。"""
+        sv = etree.Element("SubmitVisitor")
         sv.set("class", "com.fr.report.write.BuiltInSQLSubmiter")
         n = etree.SubElement(sv, "Name")
         n.text = cdata(self.name)
@@ -630,6 +778,11 @@ class WriteBack:
         if self.update_attr:
             ua = etree.SubElement(dml, "UpdateAttr")
             ua.set("updateStatus", "true")
+        return sv
+
+    def to_element(self) -> etree._Element:
+        rwa = etree.Element("ReportWriteAttr")
+        rwa.append(self.to_submit_element())
         return rwa
 
 
@@ -643,7 +796,18 @@ class Sheet:
     default_col_width: int = DEFAULT_COL_WIDTH_FU
     background: int = -1                      # white
     frozen: Optional[str] = None              # <FrozenColumnRow columnrow="A2"/>
-    write_back: Optional[WriteBack] = None
+    write_backs: List["WriteBack"] = field(default_factory=list)
+    # Report 下未建模的子节点（FloatElementList / ReportFitAttr …）原样保留
+    extras: List[Tuple[int, Any]] = field(default_factory=list)
+    child_order: Optional[List[str]] = None
+
+    @property
+    def write_back(self) -> Optional["WriteBack"]:
+        return self.write_backs[0] if self.write_backs else None
+
+    @write_back.setter
+    def write_back(self, value: Optional["WriteBack"]) -> None:
+        self.write_backs = [value] if value is not None else []
 
     # -- helpers -----------------------------------------------------------
     def cell_map(self) -> Dict[Tuple[int, int], Cell]:
@@ -708,9 +872,17 @@ class Sheet:
         if self.frozen:
             fz = etree.SubElement(rs, "FrozenColumnRow")
             fz.set("columnrow", self.frozen)
-        if self.write_back is not None:
-            rep.append(self.write_back.to_element())
-        etree.SubElement(rep, "PrivilegeControl")
+        rep.append(etree.Element("PrivilegeControl"))
+        # ReportWriteAttr（可多条 SubmitVisitor）排在 ReportAttrSet 之后、PrivilegeControl 之前
+        if self.write_backs:
+            rwa = etree.Element("ReportWriteAttr")
+            for w in self.write_backs:
+                rwa.append(w.to_submit_element())
+            rep.insert(len(rep) - 1, rwa)
+        # 未建模的 Report 子节点原样插回
+        if self.extras:
+            ordered = merge_children(self.child_order or [], {}, self.extras)
+            rep.extend(ordered)
         return rep
 
 
@@ -727,6 +899,15 @@ class Workbook:
     write_web_attr: bool = False
     write_parameter_attr: bool = True
     write_template_id: bool = True
+    # 整块原样保留：参数面板（控件/字典/布局）与网页属性（工具栏）一旦建模不全就会
+    # 把生产模板的查询栏、提交/校验按钮全部丢掉，所以读进来一律原样存、原样写。
+    parameter_attr_raw: Optional[Any] = None
+    web_attr_raw: Optional[Any] = None
+    mobile_attr_raw: Optional[Any] = None
+    # 根级未建模节点（StrategyConfigsAttr / ExcelImportTemplateAttr / ReportFitAttr /
+    # ReportExportAttr / TemplateCloudInfoAttrMark / TemplateID …）原样保留
+    extras: List[Tuple[int, Any]] = field(default_factory=list)
+    child_order: Optional[List[str]] = None
 
     # -- assembly ----------------------------------------------------------
     def to_element(self) -> etree._Element:
@@ -734,34 +915,44 @@ class Workbook:
         wb.set("xmlVersion", self.xml_version)
         wb.set("releaseVersion", self.release_version)
 
+        seq: Dict[str, Any] = {}
+
         if self.datasets:
-            tdm = etree.SubElement(wb, "TableDataMap")
+            tdm = etree.Element("TableDataMap")
             for ds in self.datasets:
                 tdm.append(ds.to_element())
+            seq["TableDataMap"] = tdm
 
-        if self.write_web_attr:
-            wa = etree.SubElement(wb, "ReportWebAttr")
+        if self.web_attr_raw is not None:
+            seq["ReportWebAttr"] = etree.fromstring(etree.tostring(self.web_attr_raw))
+        elif self.write_web_attr:
+            wa = etree.Element("ReportWebAttr")
             etree.SubElement(wa, "ServerPrinter")
             wpc = etree.SubElement(wa, "WebPageContent")
             page = etree.SubElement(wpc, "WebPage")
             page.set("isPage", "false")
             page.set("showAsImage", "false")
             page.set("autoScale", "false")
+            seq["ReportWebAttr"] = wa
 
-        if self.write_mobile_attr:
-            mob = etree.SubElement(wb, "ElementCaseMobileAttr")
+        if self.mobile_attr_raw is not None:
+            seq["ElementCaseMobileAttr"] = etree.fromstring(etree.tostring(self.mobile_attr_raw))
+        elif self.write_mobile_attr:
+            mob = etree.Element("ElementCaseMobileAttr")
             p = etree.SubElement(mob, "ElementCaseMobileAttrProvider")
             for k, v in (("horizontal", "1"), ("vertical", "1"), ("zoom", "true"),
                          ("refresh", "false"), ("isUseHTML", "false"),
                          ("isMobileCanvasSize", "false"), ("appearRefresh", "false"),
                          ("allowFullScreen", "false")):
                 p.set(k, v)
+            seq["ElementCaseMobileAttr"] = mob
 
-        for sh in self.sheets:
-            wb.append(sh.to_element())
+        seq["Report"] = [sh.to_element() for sh in self.sheets]
 
-        if self.write_parameter_attr:
-            rpa = etree.SubElement(wb, "ReportParameterAttr")
+        if self.parameter_attr_raw is not None:
+            seq["ReportParameterAttr"] = etree.fromstring(etree.tostring(self.parameter_attr_raw))
+        elif self.write_parameter_attr:
+            rpa = etree.Element("ReportParameterAttr")
             attrs = etree.SubElement(rpa, "Attributes")
             attrs.set("showWindow", "true")
             attrs.set("delayPlaying", "true")
@@ -770,21 +961,32 @@ class Workbook:
             attrs.set("useParamsTemplate", "false")
             t = etree.SubElement(rpa, "PWTitle")
             t.text = cdata("参数")
+            seq["ReportParameterAttr"] = rpa
 
-        sl = etree.SubElement(wb, "StyleList")
+        sl = etree.Element("StyleList")
         for st in self.styles.styles:
             sl.append(st.to_element())
+        seq["StyleList"] = sl
 
-        dv = etree.SubElement(wb, "DesignerVersion")
+        dv = etree.Element("DesignerVersion")
         dv.set("DesignerVersion", "KAA")
-        pv = etree.SubElement(wb, "PreviewType")
+        seq["DesignerVersion"] = dv
+        pv = etree.Element("PreviewType")
         pv.set("PreviewType", "0")
+        seq["PreviewType"] = pv
 
         if self.write_template_id:
-            mark = etree.SubElement(wb, "TemplateIdAttMark")
+            mark = etree.Element("TemplateIdAttMark")
             mark.set("class", "com.fr.base.iofile.attr.TemplateIdAttrMark")
             inner = etree.SubElement(mark, "TemplateIdAttMark")
             inner.set("TemplateId", self.template_id)
+            seq["TemplateIdAttMark"] = mark
+
+        default_order = ["TableDataMap", "ReportWebAttr", "ElementCaseMobileAttr", "Report",
+                         "ReportParameterAttr", "StyleList", "DesignerVersion",
+                         "PreviewType", "TemplateIdAttMark"]
+        for ch in merge_children(self.child_order or default_order, seq, self.extras):
+            wb.append(ch)
         return wb
 
     def to_bytes(self) -> bytes:
@@ -800,8 +1002,21 @@ class Workbook:
 
 
 # --------------------------------------------------------------------------- reader
+KNOWN_REPORT_TAGS = {"ReportPageAttr", "ColumnPrivilegeControl", "RowPrivilegeControl",
+                     "RowHeight", "ColumnWidth", "CellElementList", "ReportAttrSet",
+                     "ReportWriteAttr", "PrivilegeControl"}
+KNOWN_ROOT_TAGS = {"TableDataMap", "ReportWebAttr", "ElementCaseMobileAttr", "Report",
+                   "ReportParameterAttr", "StyleList", "DesignerVersion", "PreviewType",
+                   "TemplateIdAttMark"}
+KNOWN_CELL_TAGS = {"O", "PrivilegeControl", "HighlightList", "Expand", "Widget"}
+
+
 def _parse_sheet(rep: etree._Element) -> Sheet:
     sh = Sheet(name=rep.get("name") or "sheet1")
+    sh.child_order = [c.tag for c in rep if isinstance(c.tag, str)]
+    for i, ch in enumerate(rep):
+        if isinstance(ch.tag, str) and ch.tag not in KNOWN_REPORT_TAGS:
+            sh.extras.append((i, etree.fromstring(etree.tostring(ch))))
     rh = rep.find("RowHeight")
     if rh is not None:
         if rh.get("defaultValue"):
@@ -822,23 +1037,54 @@ def _parse_sheet(rep: etree._Element) -> Sheet:
             cell.rs = int(cel.get("rs"))
         if cel.get("s"):
             cell.style = int(cel.get("s"))
+        cell.child_order = [k.tag for k in cel if isinstance(k.tag, str)]
+        for i, ch in enumerate(cel):
+            if isinstance(ch.tag, str) and ch.tag not in KNOWN_CELL_TAGS:
+                cell.extras.append((i, etree.fromstring(etree.tostring(ch))))
         o = cel.find("O")
         cell.value = _parse_value(o)
         ex = cel.find("Expand")
         if ex is not None:
             cell.expand = _parse_expand(ex)
         for hl in cel.findall("HighlightList/Highlight"):
+            # 只做"读得懂"的解析用于展示；写回一律用 highlight_raw，避免把
+            # RowHeight/ColWidth/Value/Present/Hyperlink 这些动作类型改坏。
             cell.highlights.append(_parse_highlight(hl))
+        hll = cel.find("HighlightList")
+        if hll is not None:
+            cell.highlight_raw = etree.fromstring(etree.tostring(hll))
+            # 有原始块时不走生成器路径，否则动作类型会被简化成背景色
+            cell.highlights = []
+        w = cel.find("Widget")
+        if w is not None:
+            cell.widget = _parse_widget(w)
         sh.cells.append(cell)
     rs = rep.find("ReportAttrSet/ReportSettings")
     if rs is not None:
         fz = rs.find("FrozenColumnRow")
         if fz is not None:
             sh.frozen = fz.get("columnrow")
-    rwa = rep.find("ReportWriteAttr/SubmitVisitor")
-    if rwa is not None:
-        sh.write_back = _parse_writeback(rwa)
+    for sv in rep.findall("ReportWriteAttr/SubmitVisitor"):
+        sh.write_backs.append(_parse_writeback(sv))
     return sh
+
+
+def _parse_widget(w: etree._Element) -> Widget:
+    wid = Widget(class_name=w.get("class") or "com.fr.form.ui.TextEditor")
+    name = w.find("WidgetName")
+    if name is not None:
+        wid.name = name.get("name", "")
+    attr = w.find("WidgetAttr")
+    if attr is not None:
+        wid.description = attr.get("description", "")
+    reg = w.find("Reg")
+    if reg is not None and reg.get("class"):
+        wid.regex = reg.get("class")
+    scan = w.find("MobileScanCodeAttr")
+    if scan is not None:
+        wid.scan_code = scan.get("scanCode") != "false"
+        wid.text_input_mode = int(scan.get("textInputMode", "0") or 0)
+    return wid
 
 
 def _parse_highlight(hl: etree._Element) -> Highlight:
@@ -871,13 +1117,25 @@ def _parse_writeback(sv: etree._Element) -> WriteBack:
         for cc in dml.findall("ColumnConfig"):
             m = ColumnMapping(column_name=cc.get("name", ""),
                               is_key=(cc.get("isKey") == "true"))
-            cr = cc.find("ColumnRow")
-            if cr is not None:
-                m.column = int(cr.get("column", "0"))
-                m.row = int(cr.get("row", "0"))
+            grp = cc.find("ColumnRowGroup")
+            if grp is not None:
+                m.rows = [(int(cr.get("column", "0")), int(cr.get("row", "0")))
+                          for cr in grp.findall("ColumnRow")]
+            else:
+                cr = cc.find("ColumnRow")
+                if cr is not None:
+                    m.column = int(cr.get("column", "0"))
+                    m.row = int(cr.get("row", "0"))
+            par = cc.find("Parameter")
+            if par is not None:
+                nm = par.find("Attributes")
+                f = par.find("O")
+                expr = _parse_value(f).expr if f is not None else ""
+                m.parameter = (nm.get("name", "") if nm is not None else "", expr)
             f = cc.find("O")
             if f is not None:
-                m.formula = _parse_value(f).expr if isinstance(_parse_value(f), Formula) else ""
+                v = _parse_value(f)
+                m.formula = v.expr if isinstance(v, Formula) else ""
             wb.mappings.append(m)
         wb.update_attr = dml.find("UpdateAttr") is not None
     return wb
@@ -1013,9 +1271,19 @@ def read_cpt(path: str, encoding: str = "utf-8") -> Workbook:
     root = etree.fromstring(raw)
     wb = Workbook(xml_version=root.get("xmlVersion") or XML_VERSION,
                   release_version=root.get("releaseVersion") or RELEASE_VERSION)
+    wb.child_order = [c.tag for c in root if isinstance(c.tag, str)]
+    for i, ch in enumerate(root):
+        if isinstance(ch.tag, str) and ch.tag not in KNOWN_ROOT_TAGS:
+            wb.extras.append((i, etree.fromstring(etree.tostring(ch))))
     wb.write_mobile_attr = root.find("ElementCaseMobileAttr") is not None
     wb.write_web_attr = root.find("ReportWebAttr") is not None
     wb.write_parameter_attr = root.find("ReportParameterAttr") is not None
+    for tag, attr in (("ReportWebAttr", "web_attr_raw"),
+                      ("ReportParameterAttr", "parameter_attr_raw"),
+                      ("ElementCaseMobileAttr", "mobile_attr_raw")):
+        el = root.find(tag)
+        if el is not None:
+            setattr(wb, attr, etree.fromstring(etree.tostring(el)))
     for rep in root.findall("Report"):
         wb.sheets.append(_parse_sheet(rep))
     for td in root.findall("TableDataMap/TableData"):
@@ -1170,12 +1438,15 @@ def validate(wb: Workbook) -> List[Issue]:
                         "若服务器上没有，运行时会报数据集不存在", sh.name))
                 else:
                     ds = next(d for d in wb.datasets if d.name == v.ds_name)
+                    known = None
                     if isinstance(ds, EmbeddedDataset):
-                        cols = [c for c, _ in ds.columns]
-                        if v.column_name not in cols:
-                            out.append(Issue("error", "DS_COLUMN_MISSING",
-                                             f"{ref} 绑定列 {v.column_name!r} 不在 {v.ds_name} 中"
-                                             f"（现有: {', '.join(cols)}）", sh.name))
+                        known = [c for c, _ in ds.columns]
+                    elif isinstance(ds, SqlDataset) and ds.columns:
+                        known = [c for c, _ in ds.columns]
+                    if known is not None and v.column_name not in known:
+                        out.append(Issue("error", "DS_COLUMN_MISSING",
+                                         f"{ref} 绑定列 {v.column_name!r} 不在 {v.ds_name} 中"
+                                         f"（现有: {', '.join(known)}）", sh.name))
                 if v.is_expandable and cell.expand.direction is None:
                     out.append(Issue("warning", "EXPAND_MISSING",
                                      f"{ref} 是可扩展数据列但 Expand 未设方向，将不会扩展", sh.name))
